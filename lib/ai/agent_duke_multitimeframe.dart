@@ -46,7 +46,7 @@ class DukeMultiTimeframeResult {
 
 /// 999 aggressive M1-first forecast.
 ///
-/// M1 carries 70% of the directional decision.
+/// M5 carries primary directional authority; M1 is entry timing.
 /// M5 and M15 provide context instead of permission.
 ///
 /// There is no ±38 qualification threshold.
@@ -70,7 +70,10 @@ class AgentDukeMultiTimeframe {
     final bearish = scores.where((score) => score < 0).length;
 
     // M1 dominates because this system forecasts 60 seconds.
-    final weightedScore = (s1 * 0.70) + (s5 * 0.20) + (s15 * 0.10);
+    // TREND-FIRST MODEL:
+    // M5 establishes direction, M15 confirms market context,
+    // and M1 is used primarily for entry timing.
+    final weightedScore = (s1 * 0.20) + (s5 * 0.55) + (s15 * 0.25);
 
     String decision;
 

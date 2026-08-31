@@ -128,15 +128,15 @@ class ScannerController {
     ScanSignal signal,
     DukeMasterResult dukeResult,
   ) {
-    TradeDirection finalDirection = TradeDirection.wait;
-
-    if (dukeResult.tradeApproved) {
-      if (dukeResult.decision == 'BUY') {
-        finalDirection = TradeDirection.buy;
-      } else if (dukeResult.decision == 'SELL') {
-        finalDirection = TradeDirection.sell;
-      }
-    }
+    // HARD TREND DIRECTION LOCK
+    //
+    // ScannerEngine owns market direction.
+    // Duke evaluates quality and confidence, but cannot flip
+    // a bullish market to SELL or a bearish market to BUY.
+    //
+    // This prevents short-term oscillator or M1 pullback noise
+    // from creating counter-trend trades.
+    final TradeDirection finalDirection = signal.direction;
 
     final finalConfidence =
         ((signal.confidence * 0.40) + (dukeResult.qualityScore * 0.60))

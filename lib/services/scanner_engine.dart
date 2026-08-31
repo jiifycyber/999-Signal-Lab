@@ -198,10 +198,17 @@ class ScannerEngine {
 
     final tickScore = _tickMomentumScore(ticks);
 
-    final ensembleScore = ((m1Analysis.score * 0.62) +
-            (m5Analysis.score * 0.20) +
-            (m15Analysis.score * 0.10) +
-            (tickScore * 0.08))
+    // TREND-FIRST DIRECTION MODEL
+    //
+    // M5 = primary trend authority
+    // M15 = broader directional context
+    // M1 = entry timing / immediate confirmation
+    //
+    // Tick momentum is intentionally excluded from directional control.
+    // A brief pullback must not reverse the established market trend.
+    final ensembleScore = ((m1Analysis.score * 0.20) +
+            (m5Analysis.score * 0.55) +
+            (m15Analysis.score * 0.25))
         .clamp(-100.0, 100.0)
         .toDouble();
 
