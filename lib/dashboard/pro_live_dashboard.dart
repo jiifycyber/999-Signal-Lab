@@ -3,6 +3,7 @@ import '../ai/agent_duke_global_controller.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../models/scan_signal.dart';
 import '../ai/agent_duke_master_engine.dart';
@@ -109,6 +110,11 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
   StreamSubscription? quoteSubscription;
 
   final Map<String, double> latestPrices = {};
+
+  // Timestamp of the newest Pocket Option tick for each symbol.
+  // Used by the public verification layer to detect stale feeds.
+  final Map<String, DateTime> latestPriceTimes = {};
+
   final Map<String, List<double>> histories = {};
   final Set<String> watchlist = {};
   String? strengthCurrencyFilter;
@@ -133,6 +139,10 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
   bool connected = false;
   bool liveMode = true;
   bool strictMode = true;
+
+  final AudioPlayer _deepScanAudioPlayer = AudioPlayer();
+  String? _lastDeepScanAlertStatus;
+  DateTime? _lastDeepScanAlertAt;
 
   @override
   void initState() {
@@ -187,6 +197,7 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           final symbol = _normalize(quote.symbol);
 
           latestPrices[symbol] = quote.price;
+          latestPriceTimes[symbol] = quote.timestamp;
 
           if (symbol == _normalize(selectedPair)) {
             debugPrint(
@@ -219,6 +230,51 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
     scannerController.start();
   }
 
+  Future<void> _playDeepScanAlert(String status) async {
+    if (!mounted) return;
+
+    if (_lastDeepScanAlertStatus == status) {
+      return;
+    }
+
+    _lastDeepScanAlertStatus = status;
+
+    String? asset;
+
+    switch (status) {
+      case 'READY TO TRADE':
+        asset = 'audio/ready_to_trade.mp3';
+        break;
+      case 'DIRECTION CHANGED':
+        asset = 'audio/direction_changed.mp3';
+        break;
+      case 'SIGNAL EXPIRED':
+        asset = 'audio/signal_expired.mp3';
+        break;
+      case 'PRICE FEED UNSYNCED':
+        asset = 'audio/price_feed_unsynced.mp3';
+        break;
+      default:
+        return;
+    }
+
+    final now = DateTime.now();
+
+    if (_lastDeepScanAlertAt != null &&
+        now.difference(_lastDeepScanAlertAt!).inMilliseconds < 700) {
+      return;
+    }
+
+    _lastDeepScanAlertAt = now;
+
+    try {
+      await _deepScanAudioPlayer.stop();
+      await _deepScanAudioPlayer.play(AssetSource(asset));
+    } catch (error) {
+      debugPrint('DUKE AUDIO ALERT ERROR: $error');
+    }
+  }
+
   @override
   void dispose() {
     AgentDukeGlobalController.instance.unregisterOwner(this);
@@ -229,6 +285,8 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
     dukeVoice.removeListener(_onDukeVoiceChanged);
     dukeVoice.dispose();
     dukeCommandController.dispose();
+
+    _deepScanAudioPlayer.dispose();
 
     scannerController.dispose();
     super.dispose();
@@ -2680,12 +2738,12 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
     final normalized = _normalize(result.symbol);
 
-    final signal =
-        lastSignalBySymbol[normalized] ?? lastSignalBySymbol[result.symbol];
-
-    // Lock the time this Deep Scan was opened.
-    // Time is now used only to measure signal age.
+    // Lock Duke's analysis time, but DO NOT lock the market signal.
+    // Current price, structure, support/resistance and entry zone
+    // must continue following the newest Pocket Option scanner data.
     final scanTime = DateTime.now();
+
+    _lastDeepScanAlertStatus = null;
 
     String priceText(double? value) {
       if (value == null || !value.isFinite) {
@@ -2729,9 +2787,17 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
         builder: (context, snapshot) {
           final now = DateTime.now();
 
+          // IMPORTANT:
+          // Pull the newest ScanSignal INSIDE the live builder.
+          // The old Deep Scan captured one signal when the window opened,
+          // which caused support/resistance and the entry zone to freeze
+          // while Pocket Option's live price continued moving.
+          final liveSignal = lastSignalBySymbol[normalized] ??
+              lastSignalBySymbol[result.symbol];
+
           final currentPrice = latestPrices[normalized] ??
               latestPrices[result.symbol] ??
-              signal?.entry;
+              liveSignal?.entry;
 
           final fullHistory =
               histories[normalized] ?? histories[result.symbol] ?? <double>[];
@@ -2742,10 +2808,10 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
               : List<double>.from(fullHistory);
 
           // Advanced structural values calculated by ScannerEngine.
-          double? support = signal?.support;
-          double? resistance = signal?.resistance;
-          double? minEntry = signal?.minEntry;
-          double? maxEntry = signal?.maxEntry;
+          double? support = liveSignal?.support;
+          double? resistance = liveSignal?.resistance;
+          double? minEntry = liveSignal?.minEntry;
+          double? maxEntry = liveSignal?.maxEntry;
 
           // Legacy raw-price history is startup fallback only.
           if ((support == null ||
@@ -2794,44 +2860,116 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
           final signalAge = now.difference(scanTime).inSeconds;
 
-          // For an M1 setup, don't leave an old analysis
-          // active indefinitely.
-          final stale = signalAge >= 300;
+          // ====================================================
+          // PUBLIC SIGNAL VERIFICATION
+          // ====================================================
+
+          final latestPriceTime =
+              latestPriceTimes[normalized] ?? latestPriceTimes[result.symbol];
+
+          final feedAgeSeconds = latestPriceTime == null
+              ? 999
+              : now.difference(latestPriceTime).inSeconds.abs();
+
+          // Pocket Option streams continuously. A several-second gap
+          // means the trade gate must HOLD until fresh ticks return.
+          final feedFresh = connected &&
+              currentPrice != null &&
+              latestPriceTime != null &&
+              feedAgeSeconds <= 3;
+
+          // Duke is a 60-second forecasting engine.
+          final stale = signalAge >= 60;
+
+          final liveDirection = liveSignal?.directionText.toUpperCase();
+          final directionChanged = liveDirection != null &&
+              liveDirection != 'WAIT' &&
+              liveDirection != result.decision.toUpperCase();
 
           late final String status;
           late final Color statusColor;
 
-          if (stale) {
-            status = 'RESCAN - SETUP STALE';
-            statusColor = red;
-          } else if (currentPrice == null ||
-              minEntry == null ||
-              maxEntry == null) {
-            status = 'WAITING FOR LIVE PRICE';
-            statusColor = amber;
-          } else if (currentPrice >= minEntry && currentPrice <= maxEntry) {
-            status = 'ENTRY ZONE';
-            statusColor = green;
-          } else if (result.decision == 'BUY') {
-            if (currentPrice > maxEntry) {
-              status = 'ABOVE ZONE - WAIT FOR PULLBACK';
-              statusColor = amber;
-            } else {
-              status = 'BELOW ZONE - WAIT FOR PRICE';
-              statusColor = cyan;
-            }
-          } else if (result.decision == 'SELL') {
+          final insideEntryZone = currentPrice != null &&
+              minEntry != null &&
+              maxEntry != null &&
+              currentPrice >= minEntry &&
+              currentPrice <= maxEntry;
+
+          final verifiedReady =
+              feedFresh && !stale && !directionChanged && insideEntryZone;
+
+          // ====================================================
+          // FINAL PRODUCT POLISH
+          // ====================================================
+          //
+          // Give the user a simple 4-part verification score:
+          //
+          // 1. Pocket Option price feed fresh
+          // 2. Deep Scan still inside its 60-second life
+          // 3. Live direction still agrees with Duke
+          // 4. Price currently inside the calculated entry zone
+          //
+          // These metrics are informational only.
+          // They DO NOT alter ScannerEngine or Duke's strategy.
+          // ====================================================
+
+          int verificationChecks = 0;
+
+          if (feedFresh) verificationChecks++;
+          if (!stale) verificationChecks++;
+          if (!directionChanged) verificationChecks++;
+          if (insideEntryZone) verificationChecks++;
+
+          final verificationText = '$verificationChecks / 4 CHECKS PASSED';
+
+          final remainingSignalSeconds = (60 - signalAge).clamp(0, 60);
+
+          final signalLifeText = '${remainingSignalSeconds}s REMAINING';
+
+          double? entryDistance;
+
+          if (currentPrice != null && minEntry != null && maxEntry != null) {
             if (currentPrice < minEntry) {
-              status = 'BELOW ZONE - DO NOT CHASE';
-              statusColor = amber;
+              entryDistance = minEntry - currentPrice;
+            } else if (currentPrice > maxEntry) {
+              entryDistance = currentPrice - maxEntry;
             } else {
-              status = 'ABOVE ZONE - WAIT FOR PRICE';
-              statusColor = cyan;
+              entryDistance = 0.0;
             }
+          }
+
+          // Standard forex pip conversion.
+          // JPY pairs use 0.01. Most FX pairs use 0.0001.
+          final pipSize =
+              result.symbol.toUpperCase().contains('JPY') ? 0.01 : 0.0001;
+
+          final entryDistancePips =
+              entryDistance == null ? null : entryDistance / pipSize;
+
+          final entryDistanceText = entryDistancePips == null
+              ? '--'
+              : '${entryDistancePips.toStringAsFixed(1)} PIPS';
+
+          if (!feedFresh) {
+            status = 'PRICE FEED UNSYNCED';
+            statusColor = red;
+          } else if (stale) {
+            status = 'SIGNAL EXPIRED';
+            statusColor = red;
+          } else if (directionChanged) {
+            status = 'DIRECTION CHANGED';
+            statusColor = red;
+          } else if (insideEntryZone) {
+            status = 'READY TO TRADE';
+            statusColor = green;
           } else {
-            status = 'RESCAN';
+            status = 'WAIT FOR ENTRY';
             statusColor = amber;
           }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _playDeepScanAlert(status);
+          });
 
           return ListView(
             children: [
@@ -2848,6 +2986,25 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
                 'CURRENT PRICE',
                 priceText(currentPrice),
                 cyan,
+              ),
+              _functionMetric(
+                'PRICE FEED',
+                feedFresh ? 'SYNCED' : 'UNSYNCED',
+                feedFresh ? green : red,
+              ),
+              _functionMetric(
+                'VERIFICATION',
+                verificationText,
+                verifiedReady
+                    ? green
+                    : verificationChecks >= 3
+                        ? amber
+                        : red,
+              ),
+              _functionMetric(
+                'FEED AGE',
+                feedAgeSeconds >= 999 ? '--' : '${feedAgeSeconds}s',
+                feedFresh ? Colors.white70 : red,
               ),
               _functionMetric(
                 'SUPPORT',
@@ -2870,19 +3027,42 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
                 cyan,
               ),
               _functionMetric(
-                'ENTRY STATUS',
+                'ENTRY DISTANCE',
+                entryDistanceText,
+                insideEntryZone
+                    ? green
+                    : entryDistancePips != null && entryDistancePips <= 2.0
+                        ? cyan
+                        : amber,
+              ),
+              _functionMetric(
+                'EXECUTION STATUS',
                 status,
                 statusColor,
               ),
               _functionMetric(
                 'SIGNAL AGE',
                 durationText(signalAge),
-                signalAge >= 240 ? amber : Colors.white70,
+                signalAge >= 45 ? amber : Colors.white70,
+              ),
+              _functionMetric(
+                'SIGNAL LIFE',
+                stale ? 'EXPIRED' : signalLifeText,
+                stale
+                    ? red
+                    : remainingSignalSeconds <= 15
+                        ? amber
+                        : green,
               ),
               _functionMetric(
                 'CONFIDENCE',
                 '${result.confidence.toStringAsFixed(1)}%',
                 cyan,
+              ),
+              _functionMetric(
+                'MARKET STATE',
+                liveSignal?.regime.toUpperCase() ?? 'UNKNOWN',
+                purple,
               ),
               _functionMetric(
                 'QUALITY SCORE',
@@ -2891,20 +3071,24 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
               ),
               _functionMetric(
                 'TRADE GATE',
-                result.tradeApproved ? 'APPROVED' : 'HOLD',
-                result.tradeApproved ? green : red,
+                verifiedReady ? 'APPROVED' : 'HOLD',
+                verifiedReady ? green : amber,
               ),
               const SizedBox(height: 10),
               Text(
-                stale
-                    ? 'This setup is more than 5 minutes old. '
-                        'Run a fresh Deep Scan.'
-                    : status == 'ENTRY ZONE'
-                        ? 'Price is inside Duke\'s calculated entry zone. '
-                            'Recheck the live chart and market structure '
-                            'before execution.'
-                        : 'Duke is waiting for price to reach the '
-                            'calculated entry zone.',
+                directionChanged
+                    ? 'The live scanner direction has changed since Duke '
+                        'opened this Deep Scan. Run a fresh Deep Scan before '
+                        'using the new entry zone.'
+                    : stale
+                        ? 'This 60-second setup has expired. '
+                            'Run a fresh Deep Scan.'
+                        : status == 'ENTRY ZONE'
+                            ? 'Price is inside Duke\'s calculated entry zone. '
+                                'Recheck the live chart and market structure '
+                                'before execution.'
+                            : 'Duke is waiting for price to reach the '
+                                'calculated entry zone.',
                 style: TextStyle(
                   color: statusColor,
                   fontSize: 12,
