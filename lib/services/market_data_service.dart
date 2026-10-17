@@ -38,9 +38,11 @@ class MarketDataService {
   }
 
   void setMode(MarketMode newMode) {
-    mode = newMode;
+    // Do not restart the feed when this mode is already active.
+    // ScannerController.start() performs the initial LIVE connection.
+    if (mode == newMode) return;
 
-    // LIVE and DEMO both use genuine Twelve Data market ticks.
+    mode = newMode;
     _startLiveStream();
   }
 
