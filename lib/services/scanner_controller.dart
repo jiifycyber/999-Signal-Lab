@@ -11,6 +11,9 @@ import '../intelligence/intelligence_models.dart';
 import '../intelligence/intelligence_store.dart';
 import '../intelligence/duke_learning_engine.dart';
 import '../intelligence/alert_engine.dart';
+import '../intelligence/stage53_outcome_tracker.dart';
+import '../intelligence/formula_learning_store.dart';
+import '../intelligence/formula_outcome_history_store.dart';
 
 class ScannerController {
   final IntelligenceStore intelligenceStore = IntelligenceStore();
@@ -21,6 +24,15 @@ class ScannerController {
   final MarketDataService marketDataService;
   final ScannerEngine scannerEngine;
   final AgentDukeScannerBridge dukeBridge = AgentDukeScannerBridge();
+  final Stage53OutcomeTracker formulaOutcomeTracker = Stage53OutcomeTracker();
+  final FormulaLearningStore formulaLearningStore = FormulaLearningStore();
+  final FormulaOutcomeHistoryStore formulaOutcomeHistoryStore =
+      FormulaOutcomeHistoryStore();
+
+  List<Stage53FormulaOutcome> get formulaOutcomes =>
+      formulaOutcomeTracker.outcomes;
+
+  double get formulaWinRate => formulaOutcomeTracker.winRate;
 
   ScannerController({
     MarketDataService? marketDataService,
@@ -35,6 +47,23 @@ class ScannerController {
       StreamController<List<ForexQuote>>.broadcast();
 
   StreamSubscription<List<ForexQuote>>? _quoteSubscription;
+
+  bool _formulaLearningFrozen = false;
+  bool _formulaRollbackEngaged = false;
+
+  bool get formulaLearningFrozen => _formulaLearningFrozen;
+  bool get formulaRollbackEngaged => _formulaRollbackEngaged;
+
+  String get formulaLearningMode {
+    if (_formulaLearningFrozen && _formulaRollbackEngaged) {
+      return 'ROLLBACK ACTIVE';
+    }
+    if (_formulaLearningFrozen) return 'FROZEN';
+    if (formulaOutcomeTracker.validationStatus == 'CAUTION') {
+      return 'CAUTION';
+    }
+    return 'ACTIVE';
+  }
 
   final Map<String, ForexQuote> _latestQuotes = {};
   final Map<String, ScanSignal> _latestSignals = {};
@@ -67,11 +96,39 @@ class ScannerController {
           _quoteController.add(_latestQuotes.values.toList());
         }
 
+        // STAGE 53 — resolve matured 60-second predictions against
+        // the first real incoming market quote at or after expiration.
+        _resolveExpiredPredictions();
+
         final updatedSignals = scannerEngine.analyze(quotes);
 
         for (final signal in updatedSignals) {
           final dukeResult = dukeBridge.analyzeSignal(signal);
           _latestDukeResults[signal.symbol] = dukeResult;
+
+          // STAGE 53 — freeze the Stage 51 formula at the same moment
+          // Duke creates a qualified learning record.
+          final signalRecord = dukeResult.signalRecord;
+          final formulaSnapshot =
+              scannerEngine.advancedFormulaFor(signal.symbol);
+
+          if (signalRecord != null && formulaSnapshot != null) {
+            formulaOutcomeTracker.track(
+              id: signalRecord.id,
+              symbol: signal.symbol,
+              liveDirection: _rawDirection(signal.direction),
+              liveConfidence: signal.confidence,
+              entryPrice: signalRecord.entryPrice,
+              stopLoss: signal.stopLoss,
+              setup: signal.setup,
+              openedAt: signalRecord.openedAt,
+              formula: formulaSnapshot,
+            );
+
+            unawaited(
+              formulaOutcomeHistoryStore.save(formulaOutcomeTracker),
+            );
+          }
 
           final finalSignal = _applyDukeDecision(
             signal,
@@ -121,7 +178,156 @@ class ScannerController {
       },
     );
 
-    marketDataService.start();
+    Future.wait<bool>([
+      formulaLearningStore.restore(
+        scannerEngine.advancedFormulaLearningEngine,
+      ),
+      formulaOutcomeHistoryStore.restore(
+        formulaOutcomeTracker,
+      ),
+    ]).whenComplete(marketDataService.start);
+  }
+
+  void _resolveExpiredPredictions() {
+    final openRecords = dukeBridge.duke.signalMemory.records
+        .where((record) => record.isOpen)
+        .toList();
+
+    for (final record in openRecords) {
+      final quote = _latestQuotes[record.symbol];
+
+      if (quote == null || !quote.price.isFinite || quote.price <= 0) {
+        continue;
+      }
+
+      final expiresAt = record.openedAt.add(const Duration(seconds: 60));
+
+      // The resolver is market-data driven. It waits until the feed itself
+      // has reached or passed the 60-second expiration timestamp.
+      if (quote.timestamp.isBefore(expiresAt)) {
+        continue;
+      }
+
+      final pending = formulaOutcomeTracker.pendingFor(record.id);
+
+      final closed = dukeBridge.duke.closeSignal(
+        id: record.id,
+        exitPrice: quote.price,
+      );
+
+      if (closed == null) {
+        continue;
+      }
+
+      if (pending != null) {
+        final riskDistance = (pending.entryPrice - pending.stopLoss).abs();
+
+        final signedMove = pending.liveDirection == 'SELL'
+            ? pending.entryPrice - quote.price
+            : quote.price - pending.entryPrice;
+
+        final resultR = riskDistance <= 1e-12 ? 0.0 : signedMove / riskDistance;
+
+        intelligenceStore.addOutcome(
+          TradeOutcomeRecord(
+            symbol: pending.symbol,
+            direction: pending.liveDirection,
+            win: closed.outcome == 'WIN',
+            resultR: resultR,
+            timestamp: quote.timestamp,
+            setup: pending.setup,
+            confidence: pending.liveConfidence,
+            outcome: closed.outcome == 'BREAKEVEN' ? 'TIE' : closed.outcome,
+          ),
+        );
+
+        final formulaOutcome = formulaOutcomeTracker.resolve(
+          id: record.id,
+          exitPrice: quote.price,
+          liveOutcome: closed.outcome,
+          closedAt: quote.timestamp,
+        );
+
+        if (formulaOutcome != null) {
+          unawaited(
+            formulaOutcomeHistoryStore.save(formulaOutcomeTracker),
+          );
+        }
+
+        // STAGE 59 — VALIDATION-GATED CALIBRATION + ROLLBACK PROTECTION
+        //
+        // DEGRADED: freeze learning and restore the last HEALTHY checkpoint.
+        // CAUTION: use a reduced learning rate unless recovering from DEGRADED.
+        // HEALTHY: allow bounded learning and refresh the known-good checkpoint.
+        if (formulaOutcome != null) {
+          final validationStatus = formulaOutcomeTracker.validationStatus;
+
+          if (validationStatus == 'DEGRADED') {
+            if (!_formulaLearningFrozen) {
+              _formulaLearningFrozen = true;
+              unawaited(_rollbackFormulaToKnownGood());
+            }
+          } else {
+            if (_formulaLearningFrozen) {
+              if (validationStatus == 'HEALTHY') {
+                _formulaLearningFrozen = false;
+                _formulaRollbackEngaged = false;
+              }
+            }
+
+            if (!_formulaLearningFrozen) {
+              if (validationStatus == 'HEALTHY') {
+                unawaited(
+                  formulaLearningStore.saveKnownGood(
+                    scannerEngine.advancedFormulaLearningEngine,
+                  ),
+                );
+              }
+
+              final marketMove =
+                  formulaOutcome.exitPrice - formulaOutcome.entryPrice;
+              final tieBand = formulaOutcome.entryPrice.abs() * 0.0001;
+
+              if (marketMove.abs() > tieBand) {
+                final target = marketMove > 0 ? 1.0 : -1.0;
+                final learningRate =
+                    validationStatus == 'CAUTION' ? 0.00025 : 0.0005;
+
+                scannerEngine.learnAdvancedFormula(
+                  features: formulaOutcome.formulaFeatures,
+                  predictedScore: formulaOutcome.formulaScore,
+                  target: target,
+                  learningRate: learningRate,
+                );
+
+                unawaited(
+                  formulaLearningStore.save(
+                    scannerEngine.advancedFormulaLearningEngine,
+                  ),
+                );
+              }
+            }
+          }
+        }
+      }
+
+      // Refresh the existing learning summary only after a verified
+      // 60-second outcome has actually been recorded.
+      dukeLearningEngine.analyze();
+    }
+  }
+
+  Future<void> _rollbackFormulaToKnownGood() async {
+    final restored = await formulaLearningStore.restoreKnownGood(
+      scannerEngine.advancedFormulaLearningEngine,
+    );
+
+    if (restored) {
+      _formulaRollbackEngaged = true;
+      await formulaLearningStore.save(
+        scannerEngine.advancedFormulaLearningEngine,
+      );
+    }
   }
 
   ScanSignal _applyDukeDecision(

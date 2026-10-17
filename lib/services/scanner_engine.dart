@@ -1,6 +1,9 @@
 import 'dart:math';
 
 import '../models/forex_quote.dart';
+import '../intelligence/price_dynamics_engine.dart';
+import '../intelligence/market_geometry_engine.dart';
+import '../intelligence/advanced_combined_formula_engine.dart';
 import '../models/scan_signal.dart';
 
 /// ===============================================================
@@ -35,6 +38,47 @@ class ScannerEngine {
   final Map<String, List<_MarketCandle>> _closedM1 = {};
   final Map<String, _MarketCandle> _activeM1 = {};
   final Map<String, List<double>> _tickHistory = {};
+  final Map<String, List<PriceObservation>> _dynamicsHistory = {};
+  final Map<String, PriceDynamicsResult> _dynamicsResults = {};
+  final Map<String, List<MarketGeometryPoint>> _geometryHistory = {};
+  final Map<String, MarketGeometryResult> _geometryResults = {};
+  final AdvancedCombinedFormulaEngine _advancedFormulaEngine =
+      AdvancedCombinedFormulaEngine();
+  final Map<String, AdvancedCombinedFormulaResult> _advancedFormulaResults = {};
+
+  PriceDynamicsResult? dynamicsFor(String symbol) => _dynamicsResults[symbol];
+  MarketGeometryResult? geometryFor(String symbol) => _geometryResults[symbol];
+  AdvancedCombinedFormulaResult? advancedFormulaFor(String symbol) =>
+      _advancedFormulaResults[symbol];
+
+  AdvancedCombinedFormulaEngine get advancedFormulaLearningEngine =>
+      _advancedFormulaEngine;
+
+  List<double> get advancedFormulaWeights => _advancedFormulaEngine.weights;
+  int get advancedFormulaLearningCount => _advancedFormulaEngine.learningCount;
+  double get advancedFormulaWeightDrift => _advancedFormulaEngine.weightDrift;
+  double get advancedFormulaLastError =>
+      _advancedFormulaEngine.lastLearningError;
+  double get advancedFormulaLastTarget =>
+      _advancedFormulaEngine.lastLearningTarget;
+  double get advancedFormulaLastPredictedScore =>
+      _advancedFormulaEngine.lastPredictedScore;
+  MapEntry<String, double> get advancedFormulaStrongestInteraction =>
+      _advancedFormulaEngine.strongestInteraction;
+
+  void learnAdvancedFormula({
+    required List<double> features,
+    required double predictedScore,
+    required double target,
+    double learningRate = 0.0005,
+  }) {
+    _advancedFormulaEngine.learn(
+      rawFeatures: features,
+      predictedScore: predictedScore,
+      target: target,
+      learningRate: learningRate,
+    );
+  }
 
   List<ScanSignal> analyze(List<ForexQuote> quotes) {
     final results = <ScanSignal>[];
@@ -43,6 +87,28 @@ class ScannerEngine {
       if (!quote.price.isFinite || quote.price <= 0) continue;
 
       _ingestTick(quote);
+
+      final history = _dynamicsHistory.putIfAbsent(
+          quote.symbol, () => <PriceObservation>[]);
+      if (history.isEmpty || quote.timestamp.isAfter(history.last.timestamp)) {
+        history.add(PriceObservation(quote.price, quote.timestamp));
+        if (history.length > 100) history.removeAt(0);
+        _dynamicsResults[quote.symbol] = PriceDynamicsEngine.analyze(history);
+      }
+
+      final geometryHistory = _geometryHistory.putIfAbsent(
+        quote.symbol,
+        () => <MarketGeometryPoint>[],
+      );
+      if (geometryHistory.isEmpty ||
+          quote.timestamp.isAfter(geometryHistory.last.timestamp)) {
+        geometryHistory.add(MarketGeometryPoint(quote.price, quote.timestamp));
+        if (geometryHistory.length > 120) {
+          geometryHistory.removeAt(0);
+        }
+        _geometryResults[quote.symbol] =
+            MarketGeometryEngine.analyze(geometryHistory);
+      }
 
       final m1 = _m1Series(quote.symbol);
       final m5 = _aggregateCandles(m1, 5);
@@ -211,6 +277,82 @@ class ScannerEngine {
             (m15Analysis.score * 0.25))
         .clamp(-100.0, 100.0)
         .toDouble();
+
+    // ===========================================
+    // STAGE 51 — ADVANCED COMBINED FORMULA SHADOW INTELLIGENCE
+    //
+    // This calculation does NOT control live BUY/SELL direction.
+    // The existing M1/M5/M15 ensemble remains authoritative.
+    // ===========================================
+    final dynamics = _dynamicsResults[quote.symbol];
+    final geometry = _geometryResults[quote.symbol];
+
+    if (dynamics != null && geometry != null) {
+      final orientation = ensembleScore > 0
+          ? 1.0
+          : ensembleScore < 0
+              ? -1.0
+              : 0.0;
+
+      final fallbackScale = max(
+        _fallbackDistance(quote.symbol, quote.price),
+        quote.price.abs() * 0.000001,
+      );
+
+      final velocityFeature =
+          (dynamics.velocity / fallbackScale).clamp(-1.0, 1.0).toDouble();
+
+      final accelerationFeature =
+          (dynamics.acceleration / fallbackScale).clamp(-1.0, 1.0).toDouble();
+
+      final jerkFeature =
+          (dynamics.jerk / fallbackScale).clamp(-1.0, 1.0).toDouble();
+
+      final volatilityFeature = orientation *
+          (dynamics.volatility * 1000.0).clamp(0.0, 1.0).toDouble();
+
+      final probabilityFeature =
+          (ensembleScore / 100.0).clamp(-1.0, 1.0).toDouble();
+
+      const predictionErrorLearningFeature = 0.0;
+
+      final rectilinearFeature = orientation *
+          (geometry.rectilinearScore / 100.0).clamp(0.0, 1.0).toDouble();
+
+      final orthogonalFeature = orientation *
+          geometry.orthogonalEfficiency.clamp(0.0, 1.0).toDouble();
+
+      final junctionBranchFeature = orientation *
+          (((geometry.junctionCount + geometry.branchCount) / 10.0)
+              .clamp(0.0, 1.0)
+              .toDouble());
+
+      final adaptiveGridFeature = orientation *
+          (geometry.gridSize / fallbackScale).clamp(0.0, 1.0).toDouble();
+
+      final transitionFeature = orientation *
+          geometry.transitionProbability.clamp(0.0, 1.0).toDouble();
+
+      final pathErrorFeature =
+          -orientation * geometry.pathError.abs().clamp(0.0, 1.0).toDouble();
+
+      _advancedFormulaResults[quote.symbol] = _advancedFormulaEngine.analyze(
+        AdvancedCombinedFormulaInput(
+          velocity: velocityFeature,
+          acceleration: accelerationFeature,
+          jerk: jerkFeature,
+          volatility: volatilityFeature,
+          probability: probabilityFeature,
+          predictionErrorLearning: predictionErrorLearningFeature,
+          rectilinearNetwork: rectilinearFeature,
+          orthogonalPathEfficiency: orthogonalFeature,
+          junctionBranch: junctionBranchFeature,
+          adaptiveGrid: adaptiveGridFeature,
+          transitionProbability: transitionFeature,
+          pathErrorLearning: pathErrorFeature,
+        ),
+      );
+    }
 
     TradeDirection direction;
 
@@ -662,9 +804,16 @@ class ScannerEngine {
     minEntry = max(minEntry, support);
     maxEntry = min(maxEntry, resistance);
 
+    // Do not manufacture an entry zone around currentPrice.
+    // If market structure collapses to an invalid zone, return
+    // no executable entry zone and let the execution gate HOLD.
     if (minEntry >= maxEntry) {
-      minEntry = currentPrice - (minimumDistance * 0.25);
-      maxEntry = currentPrice + (minimumDistance * 0.25);
+      return _StructuralLevels(
+        support: support,
+        resistance: resistance,
+        minEntry: null,
+        maxEntry: null,
+      );
     }
 
     return _StructuralLevels(
@@ -1168,8 +1317,8 @@ class _StructureResult {
 class _StructuralLevels {
   final double support;
   final double resistance;
-  final double minEntry;
-  final double maxEntry;
+  final double? minEntry;
+  final double? maxEntry;
 
   const _StructuralLevels({
     required this.support,

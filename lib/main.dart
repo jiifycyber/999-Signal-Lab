@@ -1459,7 +1459,7 @@ class _NexusDashboardState extends State<NexusDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    if (MediaQuery.sizeOf(context).width < 700) {
+    if (MediaQuery.sizeOf(context).width < 1100) {
       return _buildMobileDashboard(context);
     }
 

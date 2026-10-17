@@ -1,0 +1,177 @@
+import 'dart:html' as html;
+import 'dart:js' as js;
+import 'dart:ui_web' as ui_web;
+
+import 'package:flutter/material.dart';
+
+const bool is999KLineProWeb = true;
+
+Widget build999KLineProHost({
+  required String elementId,
+  required String barsJson,
+  required String symbol,
+  required String timeframe,
+  required Widget fallback,
+}) {
+  return _KLineProHost(
+    elementId: elementId,
+    barsJson: barsJson,
+    symbol: symbol,
+    timeframe: timeframe,
+  );
+}
+
+class _KLineProHost extends StatefulWidget {
+  final String elementId;
+  final String barsJson;
+  final String symbol;
+  final String timeframe;
+
+  const _KLineProHost({
+    required this.elementId,
+    required this.barsJson,
+    required this.symbol,
+    required this.timeframe,
+  });
+
+  @override
+  State<_KLineProHost> createState() =>
+      _KLineProHostState();
+}
+
+class _KLineProHostState extends State<_KLineProHost> {
+  late final String _viewType;
+  bool _created = false;
+  int _retryCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _viewType =
+        'signal999-pro-${widget.elementId}-${identityHashCode(this)}';
+
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewType,
+      (int viewId) {
+        final element = html.DivElement()
+          ..id = widget.elementId
+          ..style.width = '100%'
+          ..style.height = '100%'
+          ..style.backgroundColor = '#030B13'
+          ..style.overflow = 'hidden';
+
+        return element;
+      },
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _sync(),
+    );
+  }
+
+  void _sync() {
+    if (!mounted) {
+      return;
+    }
+
+    try {
+      final dynamic api =
+          js.context['Signal999ProChart'];
+
+      if (api == null) {
+        _retry();
+        return;
+      }
+
+      final chartApi = api as js.JsObject;
+
+      if (!_created) {
+        final result = chartApi.callMethod(
+          'create',
+          <dynamic>[
+            widget.elementId,
+            widget.barsJson,
+            widget.symbol,
+            widget.timeframe,
+          ],
+        );
+
+        _created = result != false;
+
+        if (!_created) {
+          _retry();
+        }
+
+        return;
+      }
+
+      chartApi.callMethod(
+        'sync',
+        <dynamic>[
+          widget.elementId,
+          widget.barsJson,
+          widget.symbol,
+          widget.timeframe,
+        ],
+      );
+    } catch (error) {
+      debugPrint(
+        '999 KLine Pro sync error: $error',
+      );
+      _retry();
+    }
+  }
+
+  void _retry() {
+    if (!mounted || _retryCount >= 20) {
+      return;
+    }
+
+    _retryCount++;
+
+    Future<void>.delayed(
+      const Duration(milliseconds: 150),
+      () {
+        if (mounted) {
+          _sync();
+        }
+      },
+    );
+  }
+
+  @override
+  void didUpdateWidget(
+    covariant _KLineProHost oldWidget,
+  ) {
+    super.didUpdateWidget(oldWidget);
+
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _sync(),
+    );
+  }
+
+  @override
+  void dispose() {
+    try {
+      final dynamic api =
+          js.context['Signal999ProChart'];
+
+      if (_created && api != null) {
+        (api as js.JsObject).callMethod(
+          'remove',
+          <dynamic>[widget.elementId],
+        );
+      }
+    } catch (_) {}
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HtmlElementView(
+      viewType: _viewType,
+    );
+  }
+}

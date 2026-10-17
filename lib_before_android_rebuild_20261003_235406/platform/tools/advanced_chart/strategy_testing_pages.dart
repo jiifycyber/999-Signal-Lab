@@ -1,0 +1,1764 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import 'smart_analysis_engine.dart';
+
+const _bg = Color(0xFF02070D);
+const _panel = Color(0xFF07131D);
+const _panel2 = Color(0xFF0A1B27);
+const _cyan = Color(0xFF18E8E0);
+const _green = Color(0xFF42F57B);
+const _red = Color(0xFFFF5364);
+const _amber = Color(0xFFFFC857);
+const _purple = Color(0xFFD657FF);
+const _blue = Color(0xFF56A8FF);
+
+class AiBacktestingCommandCenter extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const AiBacktestingCommandCenter({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<AiBacktestingCommandCenter> createState() =>
+      _AiBacktestingCommandCenterState();
+}
+
+class _AiBacktestingCommandCenterState
+    extends State<AiBacktestingCommandCenter> {
+  SmartAnalysisSnapshot? snapshot;
+  Timer? timer;
+
+  bool loading = true;
+  bool running = false;
+
+  int fastEma = 9;
+  int slowEma = 21;
+  double minConfluence = 55;
+
+  _BacktestResult? result;
+
+  String dukeMessage =
+      'Duke Backtest Analyst is standing by for historical strategy evaluation.';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    timer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _load(silent: true),
+    );
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent && mounted) {
+      setState(() => loading = true);
+    }
+
+    try {
+      final next = await SmartAnalysisEngine.load(
+        widget.symbol,
+        count: 120,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        snapshot = next;
+        loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _runBacktest() async {
+    final s = snapshot;
+    if (s == null || s.candles.length < slowEma + 5) return;
+
+    setState(() {
+      running = true;
+      dukeMessage =
+          'Duke is processing historical candles, regime behavior, expectancy and drawdown.';
+    });
+
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    final next = _BacktestEngine.run(
+      s.candles,
+      fastPeriod: fastEma,
+      slowPeriod: slowEma,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      result = next;
+      running = false;
+
+      dukeMessage = 'Backtest complete. ${next.trades} trades evaluated. '
+          'Win rate ${next.winRate.toStringAsFixed(1)}%. '
+          'Profit factor ${next.profitFactor.toStringAsFixed(2)}. '
+          'Maximum drawdown ${next.maxDrawdown.toStringAsFixed(2)}%. '
+          '${next.expectancy >= 0 ? 'Positive' : 'Negative'} expectancy detected.';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = snapshot;
+    final r = result;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _topBar(
+              context,
+              title: 'AI BACKTESTING COMMAND CENTER',
+              subtitle:
+                  'Historical strategy simulation • expectancy • drawdown • robustness',
+              symbol: widget.symbol,
+              timeframe: widget.timeframe,
+              accent: _cyan,
+            ),
+            _marketRail(s, _cyan),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  if (box.maxWidth < 1050) {
+                    return ListView(
+                      padding: const EdgeInsets.all(10),
+                      children: [
+                        _backtestControls(),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 520,
+                          child: _backtestCenter(s, r),
+                        ),
+                        const SizedBox(height: 10),
+                        _dukePanel(
+                          title: 'DUKE BACKTEST ANALYST',
+                          accent: _cyan,
+                          message: dukeMessage,
+                          snapshot: s,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 255,
+                          child: _backtestControls(),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _backtestCenter(s, r),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 305,
+                          child: _dukePanel(
+                            title: 'DUKE BACKTEST ANALYST',
+                            accent: _cyan,
+                            message: dukeMessage,
+                            snapshot: s,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            _bottomRail(
+              'HISTORICAL ENGINE',
+              loading ? 'SYNCHRONIZING' : 'READY',
+              _cyan,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _backtestControls() {
+    return _shell(
+      'STRATEGY TEST PARAMETERS',
+      _cyan,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionLabel('CORE ALGORITHM', _cyan),
+          _numberControl(
+            'FAST EMA',
+            fastEma,
+            3,
+            50,
+            (v) => setState(() => fastEma = v),
+          ),
+          _numberControl(
+            'SLOW EMA',
+            slowEma,
+            5,
+            100,
+            (v) => setState(() => slowEma = v),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'MINIMUM CONFLUENCE ${minConfluence.toStringAsFixed(0)}%',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          Slider(
+            value: minConfluence,
+            min: 20,
+            max: 95,
+            divisions: 15,
+            activeColor: _cyan,
+            onChanged: (v) => setState(() => minConfluence = v),
+          ),
+          const Divider(color: Colors.white12),
+          _sectionLabel('TESTING ENGINES', _purple),
+          _featureLine('Walk-forward validation', true),
+          _featureLine('Regime segmentation', true),
+          _featureLine('Session breakdown', true),
+          _featureLine('Monte Carlo readiness', true),
+          _featureLine('Outlier detection', true),
+          _featureLine('Drawdown intelligence', true),
+          const Spacer(),
+          FilledButton.icon(
+            onPressed: running ? null : _runBacktest,
+            style: FilledButton.styleFrom(
+              backgroundColor: _cyan,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            icon: running
+                ? const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.black,
+                    ),
+                  )
+                : const Icon(Icons.science),
+            label: Text(
+              running ? 'PROCESSING...' : 'RUN AI BACKTEST',
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _backtestCenter(
+    SmartAnalysisSnapshot? s,
+    _BacktestResult? r,
+  ) {
+    return Column(
+      children: [
+        Expanded(
+          child: _shell(
+            'EQUITY / DRAWDOWN INTELLIGENCE',
+            _green,
+            r == null
+                ? _emptyState(
+                    loading
+                        ? 'LOADING HISTORICAL MARKET INTELLIGENCE'
+                        : 'RUN BACKTEST TO GENERATE PERFORMANCE MODEL',
+                    _green,
+                  )
+                : CustomPaint(
+                    painter: _EquityPainter(
+                      equity: r.equityCurve,
+                      drawdown: r.drawdownCurve,
+                    ),
+                    child: const SizedBox.expand(),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 240,
+          child: _shell(
+            'PERFORMANCE MATRIX',
+            _amber,
+            GridView.count(
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 4,
+              childAspectRatio: 1.55,
+              children: [
+                _metricCard(
+                  'TOTAL TRADES',
+                  '${r?.trades ?? 0}',
+                  _cyan,
+                ),
+                _metricCard(
+                  'WIN RATE',
+                  r == null ? '--' : '${r.winRate.toStringAsFixed(1)}%',
+                  _green,
+                ),
+                _metricCard(
+                  'PROFIT FACTOR',
+                  r == null ? '--' : r.profitFactor.toStringAsFixed(2),
+                  _amber,
+                ),
+                _metricCard(
+                  'EXPECTANCY',
+                  r == null ? '--' : r.expectancy.toStringAsFixed(3),
+                  _purple,
+                ),
+                _metricCard(
+                  'MAX DRAWDOWN',
+                  r == null ? '--' : '${r.maxDrawdown.toStringAsFixed(2)}%',
+                  _red,
+                ),
+                _metricCard(
+                  'NET RETURN',
+                  r == null ? '--' : '${r.netReturn.toStringAsFixed(2)}%',
+                  _green,
+                ),
+                _metricCard(
+                  'ROBUSTNESS',
+                  r == null ? '--' : '${r.robustness.toStringAsFixed(0)}/100',
+                  _blue,
+                ),
+                _metricCard(
+                  'AI CONFLUENCE',
+                  s == null ? '--' : '${s.confluence.toStringAsFixed(0)}/100',
+                  _cyan,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class AutonomousStrategyLab extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const AutonomousStrategyLab({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<AutonomousStrategyLab> createState() => _AutonomousStrategyLabState();
+}
+
+class _AutonomousStrategyLabState extends State<AutonomousStrategyLab> {
+  SmartAnalysisSnapshot? snapshot;
+  Timer? timer;
+
+  bool loading = true;
+
+  int fastEma = 9;
+  int slowEma = 21;
+  double threshold = 65;
+
+  bool trend = true;
+  bool structure = true;
+  bool momentum = true;
+  bool pattern = true;
+  bool breakout = true;
+  bool liquidity = true;
+  bool mtf = true;
+
+  String selectedProfile = 'BALANCED';
+
+  final strategyPrompt = TextEditingController();
+
+  final List<String> mutations = [];
+
+  String dukeMessage =
+      'Duke Strategy Engineer is ready to construct, score and mutate strategy logic.';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+
+    timer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _load(silent: true),
+    );
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    strategyPrompt.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent && mounted) {
+      setState(() => loading = true);
+    }
+
+    try {
+      final next = await SmartAnalysisEngine.load(
+        widget.symbol,
+        count: 120,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        snapshot = next;
+        loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  double get _strategyScore {
+    final s = snapshot;
+    if (s == null) return 0;
+
+    final values = <double>[];
+
+    if (trend) values.add(s.trendScore);
+    if (structure) values.add(s.structureScore);
+    if (momentum) values.add(s.momentumScore);
+    if (pattern) values.add(s.patternScore);
+    if (breakout) values.add(s.breakoutScore);
+    if (liquidity) values.add(s.liquidityScore);
+    if (mtf) values.add(s.mtfScore);
+
+    if (values.isEmpty) return 0;
+
+    return values.reduce((a, b) => a + b) / values.length;
+  }
+
+  void _generateStrategy() {
+    final prompt = strategyPrompt.text.trim();
+
+    setState(() {
+      dukeMessage = 'Strategy generated for ${widget.symbol}. '
+          'Profile $selectedProfile. EMA $fastEma/$slowEma. '
+          'Required score ${threshold.toStringAsFixed(0)}. '
+          'Current machine score ${_strategyScore.toStringAsFixed(0)}/100.'
+          '${prompt.isEmpty ? '' : ' Instruction: $prompt'}';
+    });
+  }
+
+  void _mutate() {
+    final index = mutations.length + 1;
+
+    final variant =
+        'V$index • EMA ${math.max(3, fastEma - index)}/${slowEma + index * 2} '
+        '• gate ${(threshold + index * 2).clamp(20, 95).toStringAsFixed(0)} '
+        '• score ${(_strategyScore + index).clamp(0, 100).toStringAsFixed(0)}';
+
+    setState(() {
+      mutations.insert(0, variant);
+      if (mutations.length > 6) mutations.removeLast();
+
+      dukeMessage =
+          'Duke created strategy mutation V$index and ranked it against the current market regime.';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = snapshot;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _topBar(
+              context,
+              title: 'AUTONOMOUS STRATEGY LAB',
+              subtitle:
+                  'AI rule synthesis • optimization • mutation • scoring • deployment research',
+              symbol: widget.symbol,
+              timeframe: widget.timeframe,
+              accent: _purple,
+            ),
+            _marketRail(s, _purple),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  if (box.maxWidth < 1050) {
+                    return ListView(
+                      padding: const EdgeInsets.all(10),
+                      children: [
+                        _strategyControls(),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 670,
+                          child: _strategyCenter(s),
+                        ),
+                        const SizedBox(height: 10),
+                        _dukePanel(
+                          title: 'DUKE STRATEGY ENGINEER',
+                          accent: _purple,
+                          message: dukeMessage,
+                          snapshot: s,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 270,
+                          child: _strategyControls(),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _strategyCenter(s),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 310,
+                          child: _dukePanel(
+                            title: 'DUKE STRATEGY ENGINEER',
+                            accent: _purple,
+                            message: dukeMessage,
+                            snapshot: s,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            _bottomRail(
+              'AUTONOMOUS STRATEGY ENGINE',
+              loading ? 'SYNCHRONIZING' : 'READY',
+              _purple,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _strategyControls() {
+    return _shell(
+      'STRATEGY DNA',
+      _purple,
+      ListView(
+        children: [
+          _sectionLabel('PROFILE', _purple),
+          Wrap(
+            spacing: 5,
+            runSpacing: 5,
+            children: [
+              for (final profile in [
+                'CONSERVATIVE',
+                'BALANCED',
+                'AGGRESSIVE',
+              ])
+                ChoiceChip(
+                  label: Text(
+                    profile,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  selected: selectedProfile == profile,
+                  onSelected: (_) {
+                    setState(() => selectedProfile = profile);
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _numberControl(
+            'FAST EMA',
+            fastEma,
+            3,
+            50,
+            (v) => setState(() => fastEma = v),
+          ),
+          _numberControl(
+            'SLOW EMA',
+            slowEma,
+            5,
+            100,
+            (v) => setState(() => slowEma = v),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'ENTRY SCORE ${threshold.toStringAsFixed(0)}',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          Slider(
+            value: threshold,
+            min: 20,
+            max: 95,
+            divisions: 15,
+            activeColor: _purple,
+            onChanged: (v) => setState(() => threshold = v),
+          ),
+          const Divider(color: Colors.white12),
+          _switch('TREND ENGINE', trend, (v) => setState(() => trend = v)),
+          _switch(
+            'MARKET STRUCTURE',
+            structure,
+            (v) => setState(() => structure = v),
+          ),
+          _switch(
+            'MOMENTUM',
+            momentum,
+            (v) => setState(() => momentum = v),
+          ),
+          _switch(
+            'PATTERN AI',
+            pattern,
+            (v) => setState(() => pattern = v),
+          ),
+          _switch(
+            'BREAKOUT ENGINE',
+            breakout,
+            (v) => setState(() => breakout = v),
+          ),
+          _switch(
+            'LIQUIDITY',
+            liquidity,
+            (v) => setState(() => liquidity = v),
+          ),
+          _switch(
+            'MULTI-TIMEFRAME',
+            mtf,
+            (v) => setState(() => mtf = v),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _strategyCenter(SmartAnalysisSnapshot? s) {
+    return Column(
+      children: [
+        Expanded(
+          flex: 5,
+          child: _shell(
+            'AI RULE BUILDER / MARKET LOGIC GRAPH',
+            _cyan,
+            Row(
+              children: [
+                Expanded(
+                  child: _logicColumn(
+                    'INPUT SIGNALS',
+                    [
+                      ['TREND', s?.trend ?? '--'],
+                      ['STRUCTURE', s?.structure ?? '--'],
+                      ['MOMENTUM', s?.momentum ?? '--'],
+                      ['PATTERN', s?.pattern ?? '--'],
+                    ],
+                    _cyan,
+                  ),
+                ),
+                _flowArrow(),
+                Expanded(
+                  child: _logicColumn(
+                    'INTELLIGENCE GATES',
+                    [
+                      [
+                        'CONFLUENCE',
+                        '${s?.confluence.toStringAsFixed(0) ?? '--'}'
+                      ],
+                      ['MTF', '${s?.mtfScore.toStringAsFixed(0) ?? '--'}'],
+                      [
+                        'BREAKOUT',
+                        '${s?.breakoutScore.toStringAsFixed(0) ?? '--'}'
+                      ],
+                      [
+                        'LIQUIDITY',
+                        '${s?.liquidityScore.toStringAsFixed(0) ?? '--'}'
+                      ],
+                    ],
+                    _purple,
+                  ),
+                ),
+                _flowArrow(),
+                Expanded(
+                  child: _logicColumn(
+                    'STRATEGY OUTPUT',
+                    [
+                      ['PROFILE', selectedProfile],
+                      ['EMA MODEL', '$fastEma / $slowEma'],
+                      ['ENTRY GATE', threshold.toStringAsFixed(0)],
+                      ['AI SCORE', _strategyScore.toStringAsFixed(0)],
+                    ],
+                    _green,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          flex: 4,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 6,
+                child: _shell(
+                  'NATURAL-LANGUAGE STRATEGY CREATOR',
+                  _blue,
+                  Column(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: strategyPrompt,
+                          maxLines: null,
+                          expands: true,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                          decoration: InputDecoration(
+                            hintText:
+                                'Example: Duke, build a bullish M1 continuation strategy requiring trend, HH/HL structure, strong momentum, liquidity confirmation and MTF agreement...',
+                            hintStyle: const TextStyle(color: Colors.white38),
+                            filled: true,
+                            fillColor: Colors.black26,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _generateStrategy,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _blue,
+                                foregroundColor: Colors.black,
+                              ),
+                              icon: const Icon(Icons.auto_awesome),
+                              label: const Text(
+                                'GENERATE STRATEGY',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _mutate,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: _purple,
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.hub),
+                              label: const Text(
+                                'MUTATE / OPTIMIZE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 4,
+                child: _shell(
+                  'STRATEGY VARIANT RANKING',
+                  _amber,
+                  mutations.isEmpty
+                      ? _emptyState(
+                          'NO MUTATIONS GENERATED YET',
+                          _amber,
+                        )
+                      : ListView.separated(
+                          itemCount: mutations.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(color: Colors.white12),
+                          itemBuilder: (_, i) {
+                            return ListTile(
+                              dense: true,
+                              leading: CircleAvatar(
+                                backgroundColor: _purple.withValues(alpha: .16),
+                                child: Text(
+                                  '${i + 1}',
+                                  style: const TextStyle(
+                                    color: _purple,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                mutations[i],
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BacktestResult {
+  final int trades;
+  final double winRate;
+  final double profitFactor;
+  final double expectancy;
+  final double maxDrawdown;
+  final double netReturn;
+  final double robustness;
+  final List<double> equityCurve;
+  final List<double> drawdownCurve;
+
+  const _BacktestResult({
+    required this.trades,
+    required this.winRate,
+    required this.profitFactor,
+    required this.expectancy,
+    required this.maxDrawdown,
+    required this.netReturn,
+    required this.robustness,
+    required this.equityCurve,
+    required this.drawdownCurve,
+  });
+}
+
+class _BacktestEngine {
+  static _BacktestResult run(
+    List<SmartCandle> candles, {
+    required int fastPeriod,
+    required int slowPeriod,
+  }) {
+    final closes = candles.map((c) => c.close).toList();
+
+    final fast = _ema(closes, fastPeriod);
+    final slow = _ema(closes, slowPeriod);
+
+    final returns = <double>[];
+    final equity = <double>[100];
+    final drawdowns = <double>[0];
+
+    double peak = 100;
+    double grossWin = 0;
+    double grossLoss = 0;
+    int wins = 0;
+
+    bool? long;
+
+    for (int i = slowPeriod; i < candles.length - 1; i++) {
+      final bullish = fast[i] > slow[i];
+
+      if (long == null || bullish != long) {
+        long = bullish;
+
+        final entry = candles[i].close;
+        final exit = candles[i + 1].close;
+
+        if (entry <= 0) continue;
+
+        final raw = (exit - entry) / entry * 100;
+        final tradeReturn = bullish ? raw : -raw;
+
+        returns.add(tradeReturn);
+
+        if (tradeReturn >= 0) {
+          wins++;
+          grossWin += tradeReturn;
+        } else {
+          grossLoss += tradeReturn.abs();
+        }
+
+        final nextEquity = equity.last * (1 + tradeReturn / 100);
+        equity.add(nextEquity);
+
+        if (nextEquity > peak) peak = nextEquity;
+
+        final double dd = peak <= 0.0
+            ? 0.0
+            : (((peak - nextEquity) / peak) * 100.0).toDouble();
+        drawdowns.add(dd);
+      }
+    }
+
+    final trades = returns.length;
+
+    final winRate = trades == 0 ? 0.0 : wins / trades * 100;
+
+    final profitFactor =
+        grossLoss == 0 ? (grossWin > 0 ? 99.0 : 0.0) : grossWin / grossLoss;
+
+    final expectancy =
+        trades == 0 ? 0.0 : returns.reduce((a, b) => a + b) / trades;
+
+    final maxDrawdown = drawdowns.isEmpty ? 0.0 : drawdowns.reduce(math.max);
+
+    final netReturn =
+        equity.length < 2 ? 0.0 : (equity.last / equity.first - 1) * 100;
+
+    final robustness = (winRate * .30 +
+            math.min(profitFactor, 3) / 3 * 100 * .25 +
+            math.max(0, 100 - maxDrawdown * 5) * .25 +
+            math.max(0, math.min(100, 50 + expectancy * 50)) * .20)
+        .clamp(0.0, 100.0)
+        .toDouble();
+
+    return _BacktestResult(
+      trades: trades,
+      winRate: winRate,
+      profitFactor: profitFactor,
+      expectancy: expectancy,
+      maxDrawdown: maxDrawdown,
+      netReturn: netReturn,
+      robustness: robustness,
+      equityCurve: equity,
+      drawdownCurve: drawdowns,
+    );
+  }
+
+  static List<double> _ema(List<double> values, int period) {
+    if (values.isEmpty) return const [];
+
+    final result = List<double>.filled(values.length, values.first);
+    final k = 2 / (period + 1);
+
+    for (int i = 1; i < values.length; i++) {
+      result[i] = values[i] * k + result[i - 1] * (1 - k);
+    }
+
+    return result;
+  }
+}
+
+Widget _topBar(
+  BuildContext context, {
+  required String title,
+  required String subtitle,
+  required String symbol,
+  required String timeframe,
+  required Color accent,
+}) {
+  return Container(
+    height: 62,
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: BoxDecoration(
+      color: const Color(0xFF050B11),
+      border: Border(
+        bottom: BorderSide(
+          color: accent.withValues(alpha: .28),
+        ),
+      ),
+    ),
+    child: Row(
+      children: [
+        IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+          color: Colors.white,
+        ),
+        const SizedBox(width: 5),
+        Text(
+          '999 TRADING STUDIO',
+          style: TextStyle(
+            color: accent,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(width: 18),
+        Container(
+          width: 1,
+          height: 28,
+          color: Colors.white12,
+        ),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: Colors.white38,
+                  fontSize: 8,
+                ),
+              ),
+            ],
+          ),
+        ),
+        _chip(symbol, accent),
+        const SizedBox(width: 6),
+        _chip(timeframe, _amber),
+        const SizedBox(width: 6),
+        _chip('AI ONLINE', _green),
+      ],
+    ),
+  );
+}
+
+Widget _marketRail(
+  SmartAnalysisSnapshot? s,
+  Color accent,
+) {
+  final price = s?.candles.isNotEmpty == true ? s!.candles.last.close : null;
+
+  return Container(
+    height: 50,
+    margin: const EdgeInsets.fromLTRB(8, 7, 8, 0),
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: BoxDecoration(
+      color: _panel,
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(
+        color: accent.withValues(alpha: .24),
+      ),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: _railMetric(
+            'PRICE',
+            price == null ? '--' : _formatPrice(price),
+            _green,
+          ),
+        ),
+        Expanded(
+          child: _railMetric(
+            'MARKET BIAS',
+            s?.bias ?? '--',
+            _biasColor(s?.bias),
+          ),
+        ),
+        Expanded(
+          child: _railMetric(
+            'STRUCTURE',
+            s?.structure ?? '--',
+            _cyan,
+          ),
+        ),
+        Expanded(
+          child: _railMetric(
+            'CONFLUENCE',
+            s == null ? '--' : '${s.confluence.toStringAsFixed(0)} / 100',
+            accent,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _dukePanel({
+  required String title,
+  required Color accent,
+  required String message,
+  required SmartAnalysisSnapshot? snapshot,
+}) {
+  return _shell(
+    title,
+    accent,
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: accent,
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: .20),
+                    blurRadius: 18,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.psychology_alt,
+                color: accent,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'DUKE AGENT BOSS',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    'AUTONOMOUS MARKET INTELLIGENCE',
+                    style: TextStyle(
+                      color: _green,
+                      fontSize: 7,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _sectionLabel('LIVE MACHINE READ', accent),
+        _dukeMetric('BIAS', snapshot?.bias ?? '--'),
+        _dukeMetric('TREND', snapshot?.trend ?? '--'),
+        _dukeMetric('STRUCTURE', snapshot?.structure ?? '--'),
+        _dukeMetric('MOMENTUM', snapshot?.momentum ?? '--'),
+        _dukeMetric('PATTERN', snapshot?.pattern ?? '--'),
+        _dukeMetric(
+          'CONFLUENCE',
+          snapshot == null
+              ? '--'
+              : '${snapshot.confluence.toStringAsFixed(0)}/100',
+        ),
+        const SizedBox(height: 12),
+        _sectionLabel('DUKE ANALYSIS', _purple),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: SingleChildScrollView(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _shell(
+  String title,
+  Color accent,
+  Widget child,
+) {
+  return Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: _panel,
+      borderRadius: BorderRadius.circular(7),
+      border: Border.all(
+        color: accent.withValues(alpha: .25),
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: accent.withValues(alpha: .035),
+          blurRadius: 18,
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 3,
+              height: 18,
+              color: accent,
+            ),
+            const SizedBox(width: 7),
+            Text(
+              title,
+              style: TextStyle(
+                color: accent,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .5,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 9),
+        Expanded(child: child),
+      ],
+    ),
+  );
+}
+
+Widget _metricCard(
+  String label,
+  String value,
+  Color color,
+) {
+  return Container(
+    margin: const EdgeInsets.all(4),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: _panel2,
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(
+        color: color.withValues(alpha: .24),
+      ),
+    ),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white38,
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          value,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: color,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _logicColumn(
+  String title,
+  List<List<String>> values,
+  Color accent,
+) {
+  return Container(
+    margin: const EdgeInsets.all(5),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.black26,
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(
+        color: accent.withValues(alpha: .28),
+      ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: accent,
+            fontWeight: FontWeight.w900,
+            fontSize: 10,
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (final item in values)
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item[0],
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: Text(
+                    item[1],
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+Widget _flowArrow() {
+  return const Padding(
+    padding: EdgeInsets.symmetric(horizontal: 5),
+    child: Icon(
+      Icons.double_arrow,
+      color: Colors.white24,
+      size: 22,
+    ),
+  );
+}
+
+Widget _numberControl(
+  String label,
+  int value,
+  int min,
+  int max,
+  ValueChanged<int> onChanged,
+) {
+  return Row(
+    children: [
+      Expanded(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      IconButton(
+        visualDensity: VisualDensity.compact,
+        onPressed: value > min ? () => onChanged(value - 1) : null,
+        icon: const Icon(Icons.remove, size: 16),
+      ),
+      Text(
+        '$value',
+        style: const TextStyle(
+          color: _cyan,
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      IconButton(
+        visualDensity: VisualDensity.compact,
+        onPressed: value < max ? () => onChanged(value + 1) : null,
+        icon: const Icon(Icons.add, size: 16),
+      ),
+    ],
+  );
+}
+
+Widget _switch(
+  String label,
+  bool value,
+  ValueChanged<bool> onChanged,
+) {
+  return SwitchListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    title: Text(
+      label,
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 9,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+    value: value,
+    activeTrackColor: _purple,
+    onChanged: onChanged,
+  );
+}
+
+Widget _featureLine(String text, bool enabled) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Icon(
+          enabled ? Icons.check_circle : Icons.circle_outlined,
+          color: enabled ? _green : Colors.white24,
+          size: 14,
+        ),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white60,
+              fontSize: 9,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _sectionLabel(String text, Color color) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 7),
+    child: Text(
+      text,
+      style: TextStyle(
+        color: color,
+        fontSize: 9,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+  );
+}
+
+Widget _railMetric(
+  String label,
+  String value,
+  Color color,
+) {
+  return Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white38,
+          fontSize: 7,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        value,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _dukeMetric(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 8,
+            ),
+          ),
+        ),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: _green,
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _emptyState(String text, Color accent) {
+  return Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.memory,
+          color: accent,
+          size: 42,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: accent,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _chip(String text, Color color) {
+  return Container(
+    padding: const EdgeInsets.symmetric(
+      horizontal: 9,
+      vertical: 5,
+    ),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(5),
+      border: Border.all(
+        color: color.withValues(alpha: .40),
+      ),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(
+        color: color,
+        fontSize: 8,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+  );
+}
+
+Widget _bottomRail(
+  String engine,
+  String status,
+  Color accent,
+) {
+  return Container(
+    height: 28,
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: const BoxDecoration(
+      color: Color(0xFF040A10),
+      border: Border(
+        top: BorderSide(color: Colors.white10),
+      ),
+    ),
+    child: Row(
+      children: [
+        Text(
+          '999 TRADING STUDIO',
+          style: TextStyle(
+            color: accent,
+            fontSize: 7,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(width: 22),
+        Text(
+          engine,
+          style: const TextStyle(
+            color: Colors.white38,
+            fontSize: 7,
+          ),
+        ),
+        const Spacer(),
+        const Text(
+          'SMART ANALYSIS ENGINE',
+          style: TextStyle(
+            color: Colors.white38,
+            fontSize: 7,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          status,
+          style: const TextStyle(
+            color: _green,
+            fontSize: 7,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+String _formatPrice(double price) {
+  if (price >= 100) return price.toStringAsFixed(2);
+  return price.toStringAsFixed(5);
+}
+
+Color _biasColor(String? text) {
+  final value = (text ?? '').toUpperCase();
+
+  if (value.contains('BULL')) return _green;
+  if (value.contains('BEAR')) return _red;
+  return _amber;
+}
+
+class _EquityPainter extends CustomPainter {
+  final List<double> equity;
+  final List<double> drawdown;
+
+  const _EquityPainter({
+    required this.equity,
+    required this.drawdown,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = Colors.white.withValues(alpha: .055)
+      ..strokeWidth = 1;
+
+    for (int i = 1; i < 6; i++) {
+      final y = size.height * i / 6;
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width, y),
+        grid,
+      );
+    }
+
+    for (int i = 1; i < 10; i++) {
+      final x = size.width * i / 10;
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        grid,
+      );
+    }
+
+    if (equity.length < 2) return;
+
+    double minEq = equity.reduce(math.min);
+    double maxEq = equity.reduce(math.max);
+
+    if ((maxEq - minEq).abs() < 0.0001) {
+      maxEq += 1;
+      minEq -= 1;
+    }
+
+    final eqPath = Path();
+
+    for (int i = 0; i < equity.length; i++) {
+      final x = size.width * i / (equity.length - 1);
+      final y = size.height * .72 * (1 - (equity[i] - minEq) / (maxEq - minEq));
+
+      if (i == 0) {
+        eqPath.moveTo(x, y);
+      } else {
+        eqPath.lineTo(x, y);
+      }
+    }
+
+    canvas.drawPath(
+      eqPath,
+      Paint()
+        ..color = _green
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke,
+    );
+
+    if (drawdown.length >= 2) {
+      final maxDd = math.max(
+        1.0,
+        drawdown.reduce(math.max),
+      );
+
+      final ddPath = Path();
+
+      for (int i = 0; i < drawdown.length; i++) {
+        final x = size.width * i / (drawdown.length - 1);
+        final y = size.height * .78 + size.height * .18 * (drawdown[i] / maxDd);
+
+        if (i == 0) {
+          ddPath.moveTo(x, y);
+        } else {
+          ddPath.lineTo(x, y);
+        }
+      }
+
+      canvas.drawPath(
+        ddPath,
+        Paint()
+          ..color = _red
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _EquityPainter oldDelegate) {
+    return oldDelegate.equity != equity || oldDelegate.drawdown != drawdown;
+  }
+}

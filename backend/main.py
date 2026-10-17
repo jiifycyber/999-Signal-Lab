@@ -111,14 +111,19 @@ async def pocket_option_websocket(websocket: WebSocket):
         })
 
         async for message in bridge.messages():
-            # TEMPORARY PASS-THROUGH:
-            # We will replace this with normalized price ticks once
-            # the exact Pocket Option live-price event is identified.
-            await websocket.send_json({
-                "event": "po_raw",
-                "source": "pocket_option",
-                "data": message
-            })
+            try:
+                payload = json.loads(message)
+            except Exception:
+                payload = None
+
+            if isinstance(payload, dict):
+                await websocket.send_json(payload)
+            else:
+                await websocket.send_json({
+                    "event": "po_raw",
+                    "source": "pocket_option",
+                    "data": message
+                })
 
     except WebSocketDisconnect:
         pass

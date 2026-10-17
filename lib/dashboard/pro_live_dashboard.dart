@@ -1,3 +1,6 @@
+// ignore_for_file: unused_import, unused_field, unused_element
+
+import 'package:local_auth/local_auth.dart';
 import 'dart:async';
 import '../ai/agent_duke_global_controller.dart';
 import 'dart:math';
@@ -450,56 +453,58 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
   Future<void> _registerFaceId() async {
     try {
-      final user = Supabase.instance.client.auth.currentUser;
+      final auth = LocalAuthentication();
 
-      if (user == null) {
-        if (!mounted) return;
+      final supported = await auth.isDeviceSupported();
+      final canCheck = await auth.canCheckBiometrics;
 
+      if (supported == false || canCheck == false) {
+        if (mounted == false) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Please log in normally before setting up Face ID.',
-            ),
+            content: Text('Face ID is not available on this device.'),
           ),
         );
         return;
       }
 
-      final authenticator = PasskeyAuthenticator();
+      final biometrics = await auth.getAvailableBiometrics();
+      final hasFaceId = biometrics.contains(BiometricType.face);
 
-      await Supabase.instance.client.auth.registerPasskey(
-        authenticator,
-        friendlyName: '999 Intelligence Pro Face ID',
-      );
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Face ID passkey setup complete.',
+      if (hasFaceId == false) {
+        if (mounted == false) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Face ID is not enrolled on this iPhone.'),
           ),
-          duration: Duration(seconds: 3),
-        ),
+        );
+        return;
+      }
+
+      final authenticated = await auth.authenticate(
+        localizedReason: 'Authenticate to access 999 Signal Intelligence Pro',
+        biometricOnly: true,
+        persistAcrossBackgrounding: true,
       );
-    } on AuthException catch (e) {
-      if (!mounted) return;
+
+      if (mounted == false) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Face ID setup failed: ${e.message}',
+            authenticated
+                ? 'Face ID verified successfully.'
+                : 'Face ID verification cancelled.',
           ),
+          duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
-      if (!mounted) return;
+      if (mounted == false) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Face ID setup failed: $e',
-          ),
+          content: Text('Face ID failed: $e'),
         ),
       );
     }
@@ -2795,17 +2800,10 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           final liveSignal = lastSignalBySymbol[normalized] ??
               lastSignalBySymbol[result.symbol];
 
-          final currentPrice = latestPrices[normalized] ??
-              latestPrices[result.symbol] ??
-              liveSignal?.entry;
-
-          final fullHistory =
-              histories[normalized] ?? histories[result.symbol] ?? <double>[];
-
-          // Use recent market movement rather than the entire stored history.
-          final recentHistory = fullHistory.length > 60
-              ? fullHistory.sublist(fullHistory.length - 60)
-              : List<double>.from(fullHistory);
+          // Execution verification must use a fresh live bridge quote only.
+          // Never substitute the signal's original entry price as live price.
+          final currentPrice =
+              latestPrices[normalized] ?? latestPrices[result.symbol];
 
           // Advanced structural values calculated by ScannerEngine.
           double? support = liveSignal?.support;
@@ -2813,50 +2811,13 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           double? minEntry = liveSignal?.minEntry;
           double? maxEntry = liveSignal?.maxEntry;
 
-          // Legacy raw-price history is startup fallback only.
-          if ((support == null ||
-                  resistance == null ||
-                  minEntry == null ||
-                  maxEntry == null) &&
-              recentHistory.isNotEmpty) {
-            final legacySupport = recentHistory.reduce(
-              (a, b) => a < b ? a : b,
-            );
-
-            final legacyResistance = recentHistory.reduce(
-              (a, b) => a > b ? a : b,
-            );
-
-            final range = legacyResistance - legacySupport;
-
-            support ??= legacySupport;
-            resistance ??= legacyResistance;
-
-            if (range > 0) {
-              if (result.decision == 'BUY') {
-                minEntry ??= legacySupport + (range * 0.15);
-                maxEntry ??= legacySupport + (range * 0.45);
-              } else if (result.decision == 'SELL') {
-                minEntry ??= legacyResistance - (range * 0.45);
-                maxEntry ??= legacyResistance - (range * 0.15);
-              }
-            }
-          }
-
-          // Fallback while very little history has accumulated.
-          if (currentPrice != null && (minEntry == null || maxEntry == null)) {
-            final fallbackDistance = result.symbol.contains('JPY')
-                ? 0.020
-                : currentPrice.abs() >= 1000
-                    ? currentPrice * 0.00020
-                    : 0.00020;
-
-            minEntry = currentPrice - fallbackDistance;
-            maxEntry = currentPrice + fallbackDistance;
-
-            support ??= minEntry;
-            resistance ??= maxEntry;
-          }
+          // Never manufacture an entry zone around the current price.
+          // A valid entry must come from ScannerEngine market structure.
+          final structuralEntryAvailable = minEntry != null &&
+              maxEntry != null &&
+              support != null &&
+              resistance != null &&
+              minEntry < maxEntry;
 
           final signalAge = now.difference(scanTime).inSeconds;
 
@@ -2889,14 +2850,16 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           late final String status;
           late final Color statusColor;
 
-          final insideEntryZone = currentPrice != null &&
-              minEntry != null &&
-              maxEntry != null &&
+          final insideEntryZone = structuralEntryAvailable &&
+              currentPrice != null &&
               currentPrice >= minEntry &&
               currentPrice <= maxEntry;
 
-          final verifiedReady =
-              feedFresh && !stale && !directionChanged && insideEntryZone;
+          final verifiedReady = structuralEntryAvailable &&
+              feedFresh &&
+              !stale &&
+              !directionChanged &&
+              insideEntryZone;
 
           // ====================================================
           // FINAL PRODUCT POLISH
@@ -2950,7 +2913,10 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
               ? '--'
               : '${entryDistancePips.toStringAsFixed(1)} PIPS';
 
-          if (!feedFresh) {
+          if (!structuralEntryAvailable) {
+            status = 'ENTRY ZONE UNAVAILABLE';
+            statusColor = red;
+          } else if (!feedFresh) {
             status = 'PRICE FEED UNSYNCED';
             statusColor = red;
           } else if (stale) {
@@ -2959,7 +2925,7 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           } else if (directionChanged) {
             status = 'DIRECTION CHANGED';
             statusColor = red;
-          } else if (insideEntryZone) {
+          } else if (verifiedReady) {
             status = 'READY TO TRADE';
             statusColor = green;
           } else {
@@ -4966,6 +4932,8 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
     String section,
   ) {
     final duke = scannerController.dukeResults[signal.symbol];
+    final stage52 =
+        scannerController.scannerEngine.advancedFormulaFor(signal.symbol);
     final direction = signal.direction == TradeDirection.buy
         ? 'CALL / BUY'
         : signal.direction == TradeDirection.sell
@@ -5096,6 +5064,121 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
             duke?.tradeApproved == true ? 'APPROVED' : 'NOT APPROVED',
           ),
         ]);
+
+        if (stage52 != null) {
+          final liveBullish = signal.direction == TradeDirection.buy;
+          final formulaBullish = stage52.score > 0;
+          final agreement = stage52.score == 0.0
+              ? 'NEUTRAL'
+              : liveBullish == formulaBullish
+                  ? 'YES'
+                  : 'NO';
+
+          details.addAll([
+            MapEntry(
+              'FORMULA SCORE',
+              stage52.score.toStringAsFixed(1),
+            ),
+            MapEntry(
+              'BULLISH %',
+              '${(stage52.bullishProbability * 100.0).toStringAsFixed(1)}%',
+            ),
+            MapEntry(
+              'BEARISH %',
+              '${(stage52.bearishProbability * 100.0).toStringAsFixed(1)}%',
+            ),
+            MapEntry(
+              'LINEAR',
+              stage52.linearContribution.toStringAsFixed(4),
+            ),
+            MapEntry(
+              'INTERACTION',
+              stage52.interactionContribution.toStringAsFixed(4),
+            ),
+            MapEntry(
+              'PAIRS',
+              stage52.interactionCount.toString(),
+            ),
+            MapEntry(
+              'AGREEMENT',
+              agreement,
+            ),
+            MapEntry(
+              'LEARNING COUNT',
+              scannerController.scannerEngine.advancedFormulaLearningCount
+                  .toString(),
+            ),
+            MapEntry(
+              'WEIGHT DRIFT',
+              scannerController.scannerEngine.advancedFormulaWeightDrift
+                  .toStringAsFixed(6),
+            ),
+            MapEntry(
+              'LAST ERROR',
+              scannerController.scannerEngine.advancedFormulaLastError
+                  .toStringAsFixed(6),
+            ),
+            MapEntry(
+              'LAST TARGET',
+              scannerController.scannerEngine.advancedFormulaLastTarget
+                  .toStringAsFixed(1),
+            ),
+            MapEntry(
+              'LAST PRED SCORE',
+              scannerController.scannerEngine.advancedFormulaLastPredictedScore
+                  .toStringAsFixed(2),
+            ),
+            MapEntry(
+              'TOP INTERACTION',
+              '${scannerController.scannerEngine.advancedFormulaStrongestInteraction.key} ${scannerController.scannerEngine.advancedFormulaStrongestInteraction.value.toStringAsFixed(6)}',
+            ),
+            MapEntry(
+              'WEIGHTS',
+              scannerController.scannerEngine.advancedFormulaWeights
+                  .map((value) => value.toStringAsFixed(4))
+                  .join(' | '),
+            ),
+            MapEntry(
+              'VALIDATION STATUS',
+              scannerController.formulaOutcomeTracker.validationStatus,
+            ),
+            MapEntry(
+              'LEARNING MODE',
+              scannerController.formulaLearningMode,
+            ),
+            MapEntry(
+              'ROLLBACK',
+              scannerController.formulaRollbackEngaged ? 'ENGAGED' : 'STANDBY',
+            ),
+            MapEntry(
+              'GRADED SAMPLE',
+              scannerController.formulaOutcomeTracker.gradedCount.toString(),
+            ),
+            MapEntry(
+              'RECENT WIN %',
+              '${scannerController.formulaOutcomeTracker.recentWinRate.toStringAsFixed(1)}%',
+            ),
+            MapEntry(
+              'LONG WIN %',
+              '${scannerController.formulaOutcomeTracker.longTermWinRate.toStringAsFixed(1)}%',
+            ),
+            MapEntry(
+              'AGREE WIN %',
+              '${scannerController.formulaOutcomeTracker.agreementWinRate.toStringAsFixed(1)}% (${scannerController.formulaOutcomeTracker.agreementGradedCount})',
+            ),
+            MapEntry(
+              'DISAGREE WIN %',
+              '${scannerController.formulaOutcomeTracker.disagreementWinRate.toStringAsFixed(1)}% (${scannerController.formulaOutcomeTracker.disagreementGradedCount})',
+            ),
+          ]);
+        } else {
+          details.add(
+            const MapEntry(
+              'STAGE 52',
+              'WARMING UP',
+            ),
+          );
+        }
         break;
     }
 
@@ -7294,23 +7377,30 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
     final content = title == null
         ? child
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 8,
-                  height: 1.0,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Expanded(child: child),
-            ],
+        : LayoutBuilder(
+            builder: (context, constraints) {
+              final bounded = height != null || constraints.hasBoundedHeight;
+
+              return Column(
+                mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 8,
+                      height: 1.0,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (bounded) Expanded(child: child) else child,
+                ],
+              );
+            },
           );
 
     final body = Stack(

@@ -1,0 +1,1977 @@
+import 'package:flutter/material.dart';
+
+const _bg = Color(0xFF020811);
+const _panel = Color(0xFF07131E);
+const _panel2 = Color(0xFF0A1825);
+const _cyan = Color(0xFF13D8FF);
+const _green = Color(0xFF16E0A0);
+const _amber = Color(0xFFFFB84D);
+const _red = Color(0xFFFF5B69);
+
+class SmartTechnicalAnalysisScreen extends StatelessWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const SmartTechnicalAnalysisScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  void _open(
+    BuildContext context,
+    Widget page,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => page,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _panel,
+        foregroundColor: Colors.white,
+        titleSpacing: 8,
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '999 SMART TECHNICAL ANALYSIS',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                letterSpacing: .7,
+              ),
+            ),
+            Text(
+              'Automated Market Structure + AI Technical Analysis',
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _marketHeader(),
+          const SizedBox(height: 18),
+          const Text(
+            'SMART TECHNICAL ANALYSIS',
+            style: TextStyle(
+              color: _cyan,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.3,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (_, constraints) {
+              final width = constraints.maxWidth;
+              final cardWidth = width >= 1100
+                  ? (width - 32) / 3
+                  : width >= 700
+                      ? (width - 16) / 2
+                      : width;
+
+              return Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  SizedBox(
+                    width: cardWidth,
+                    child: _pageCard(
+                      context,
+                      number: '01',
+                      title: 'SMART CHART ANALYSIS',
+                      description:
+                          'Auto trendlines, support/resistance, Fibonacci, '
+                          'market structure, supply/demand, FVGs and order blocks.',
+                      icon: Icons.candlestick_chart,
+                      color: _cyan,
+                      onTap: () => _open(
+                        context,
+                        SmartChartAnalysisScreen(
+                          symbol: symbol,
+                          timeframe: timeframe,
+                          price: price,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _pageCard(
+                      context,
+                      number: '02',
+                      title: 'PATTERN INTELLIGENCE',
+                      description:
+                          'Chart patterns, candlestick patterns, structure '
+                          'formation and AI pattern confidence.',
+                      icon: Icons.polyline,
+                      color: _green,
+                      onTap: () => _open(
+                        context,
+                        PatternIntelligenceScreen(
+                          symbol: symbol,
+                          timeframe: timeframe,
+                          price: price,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _pageCard(
+                      context,
+                      number: '03',
+                      title: 'BREAKOUT & LIQUIDITY',
+                      description:
+                          'Breakouts, retests, failed breaks, liquidity zones, '
+                          'sweeps and key reaction areas.',
+                      icon: Icons.open_in_full,
+                      color: _amber,
+                      onTap: () => _open(
+                        context,
+                        BreakoutLiquidityScreen(
+                          symbol: symbol,
+                          timeframe: timeframe,
+                          price: price,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _pageCard(
+                      context,
+                      number: '04',
+                      title: 'MTF & AI CONFLUENCE',
+                      description:
+                          'Multi-timeframe trend alignment, structure, momentum '
+                          'and AI confluence scoring.',
+                      icon: Icons.layers,
+                      color: Colors.purpleAccent,
+                      onTap: () => _open(
+                        context,
+                        MtfConfluenceScreen(
+                          symbol: symbol,
+                          timeframe: timeframe,
+                          price: price,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _pageCard(
+                      context,
+                      number: '05',
+                      title: 'DUKE TECHNICAL AI',
+                      description:
+                          'Natural-language technical analysis command center '
+                          'for manual, assisted and full-auto operation.',
+                      icon: Icons.psychology_alt,
+                      color: Colors.lightBlueAccent,
+                      onTap: () => _open(
+                        context,
+                        DukeTechnicalAiScreen(
+                          symbol: symbol,
+                          timeframe: timeframe,
+                          price: price,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _marketHeader() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _boxDecoration(_cyan),
+      child: Wrap(
+        spacing: 24,
+        runSpacing: 10,
+        children: [
+          _headerMetric(
+            'SYMBOL',
+            symbol,
+            _cyan,
+          ),
+          _headerMetric(
+            'TIMEFRAME',
+            timeframe,
+            _amber,
+          ),
+          _headerMetric(
+            'PRICE',
+            price > 0 ? price.toStringAsFixed(5) : '--',
+            _green,
+          ),
+          _headerMetric(
+            'ANALYSIS MODE',
+            'MANUAL / AI ASSIST / FULL AUTO',
+            _cyan,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerMetric(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return SizedBox(
+      width: 180,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white30,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pageCard(
+    BuildContext context, {
+    required String number,
+    required String title,
+    required String description,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          constraints: const BoxConstraints(
+            minHeight: 185,
+          ),
+          padding: const EdgeInsets.all(18),
+          decoration: _boxDecoration(color),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      icon,
+                      color: color,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    number,
+                    style: TextStyle(
+                      color: color.withValues(alpha: .45),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                  height: 1.45,
+                ),
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Text(
+                    'OPEN PAGE',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Icon(
+                    Icons.arrow_forward,
+                    size: 15,
+                    color: color,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SmartChartAnalysisScreen extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const SmartChartAnalysisScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<SmartChartAnalysisScreen> createState() =>
+      _SmartChartAnalysisScreenState();
+}
+
+class _SmartChartAnalysisScreenState extends State<SmartChartAnalysisScreen> {
+  bool trendlines = true;
+  bool supportResistance = true;
+  bool fibonacci = true;
+  bool structure = true;
+  bool supplyDemand = true;
+  bool fairValueGaps = true;
+  bool orderBlocks = true;
+
+  String mode = 'AI ASSIST';
+
+  @override
+  Widget build(BuildContext context) {
+    return _DedicatedSmartPage(
+      title: 'SMART CHART ANALYSIS',
+      subtitle:
+          'Automated structure, levels and institutional technical analysis',
+      symbol: widget.symbol,
+      timeframe: widget.timeframe,
+      price: widget.price,
+      color: _cyan,
+      body: Column(
+        children: [
+          _analysisMode(
+            mode,
+            (value) {
+              setState(() {
+                mode = value;
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          _controlPanel(
+            title: 'AUTO ANALYSIS LAYERS',
+            children: [
+              _switchRow(
+                'Auto Trendlines',
+                trendlines,
+                (v) => setState(() => trendlines = v),
+              ),
+              _switchRow(
+                'Smart Support / Resistance',
+                supportResistance,
+                (v) => setState(() => supportResistance = v),
+              ),
+              _switchRow(
+                'Auto Fibonacci',
+                fibonacci,
+                (v) => setState(() => fibonacci = v),
+              ),
+              _switchRow(
+                'Market Structure',
+                structure,
+                (v) => setState(() => structure = v),
+              ),
+              _switchRow(
+                'Supply / Demand Zones',
+                supplyDemand,
+                (v) => setState(() => supplyDemand = v),
+              ),
+              _switchRow(
+                'Fair Value Gaps',
+                fairValueGaps,
+                (v) => setState(() => fairValueGaps = v),
+              ),
+              _switchRow(
+                'Order Blocks',
+                orderBlocks,
+                (v) => setState(() => orderBlocks = v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _engineStatus(
+            'SMART CHART ENGINE',
+            'UI + control layer ready for candle-engine wiring',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PatternIntelligenceScreen extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const PatternIntelligenceScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<PatternIntelligenceScreen> createState() =>
+      _PatternIntelligenceScreenState();
+}
+
+class _PatternIntelligenceScreenState extends State<PatternIntelligenceScreen> {
+  bool chartPatterns = true;
+  bool candlePatterns = true;
+  bool reversalPatterns = true;
+  bool continuationPatterns = true;
+  bool harmonicPatterns = true;
+  bool autoScan = true;
+
+  String sensitivity = 'BALANCED';
+  String selectedCategory = 'ALL';
+
+  final List<Map<String, String>> detectedPatterns = [];
+
+  void _scanPatterns() {
+    setState(() {
+      detectedPatterns.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Pattern scan requested. Detection results will populate from the Smart Analysis engine.',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _DedicatedSmartPage(
+      title: 'PATTERN INTELLIGENCE',
+      subtitle: 'AI chart-pattern + candlestick recognition command center',
+      symbol: widget.symbol,
+      timeframe: widget.timeframe,
+      price: widget.price,
+      color: _green,
+      body: Column(
+        children: [
+          LayoutBuilder(
+            builder: (_, constraints) {
+              if (constraints.maxWidth < 900) {
+                return Column(
+                  children: [
+                    _patternControls(),
+                    const SizedBox(height: 14),
+                    _patternSummary(),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 330,
+                    child: _patternControls(),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: _patternSummary(),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          _patternScannerTable(),
+          const SizedBox(height: 14),
+          _candlestickSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _patternControls() {
+    return _controlPanel(
+      title: 'PATTERN ENGINE CONTROLS',
+      children: [
+        _switchRow(
+          'Automatic Pattern Scan',
+          autoScan,
+          (v) => setState(() => autoScan = v),
+        ),
+        _switchRow(
+          'Chart Patterns',
+          chartPatterns,
+          (v) => setState(() => chartPatterns = v),
+        ),
+        _switchRow(
+          'Candlestick Patterns',
+          candlePatterns,
+          (v) => setState(() => candlePatterns = v),
+        ),
+        _switchRow(
+          'Reversal Patterns',
+          reversalPatterns,
+          (v) => setState(() => reversalPatterns = v),
+        ),
+        _switchRow(
+          'Continuation Patterns',
+          continuationPatterns,
+          (v) => setState(() => continuationPatterns = v),
+        ),
+        _switchRow(
+          'Harmonic Pattern Layer',
+          harmonicPatterns,
+          (v) => setState(() => harmonicPatterns = v),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'SENSITIVITY',
+          style: TextStyle(
+            color: Colors.white38,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final value in [
+              'CONSERVATIVE',
+              'BALANCED',
+              'ENHANCED',
+            ])
+              ChoiceChip(
+                label: Text(value),
+                selected: sensitivity == value,
+                onSelected: (_) {
+                  setState(() {
+                    sensitivity = value;
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _scanPatterns,
+            icon: const Icon(Icons.radar),
+            label: const Text('SCAN CURRENT CHART'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _patternSummary() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_green),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'AI PATTERN SUMMARY',
+            style: TextStyle(
+              color: _green,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .8,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _patternMetric(
+            'CURRENT SYMBOL',
+            widget.symbol,
+            _cyan,
+          ),
+          _patternMetric(
+            'ACTIVE TIMEFRAME',
+            widget.timeframe,
+            _amber,
+          ),
+          _patternMetric(
+            'SCAN MODE',
+            autoScan ? 'AUTOMATIC' : 'MANUAL',
+            autoScan ? _green : _amber,
+          ),
+          _patternMetric(
+            'SENSITIVITY',
+            sensitivity,
+            _cyan,
+          ),
+          _patternMetric(
+            'DETECTED PATTERNS',
+            '${detectedPatterns.length}',
+            detectedPatterns.isEmpty ? _amber : _green,
+          ),
+          _patternMetric(
+            'ENGINE STATE',
+            detectedPatterns.isEmpty
+                ? 'READY FOR MARKET ANALYSIS'
+                : 'PATTERNS DETECTED',
+            detectedPatterns.isEmpty ? _amber : _green,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _patternScannerTable() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_green),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'DETECTED PATTERNS',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              DropdownButton<String>(
+                value: selectedCategory,
+                dropdownColor: _panel2,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'ALL',
+                    child: Text('ALL'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'REVERSAL',
+                    child: Text('REVERSAL'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'CONTINUATION',
+                    child: Text('CONTINUATION'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'CANDLE',
+                    child: Text('CANDLE'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      selectedCategory = value;
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'PATTERN',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  'DIRECTION',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  'CONFIDENCE',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  'STATUS',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Divider(color: Colors.white10),
+          if (detectedPatterns.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                vertical: 28,
+              ),
+              alignment: Alignment.center,
+              child: const Column(
+                children: [
+                  Icon(
+                    Icons.polyline,
+                    color: Colors.white24,
+                    size: 38,
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    'NO PATTERN ANALYSIS HAS RUN YET',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  SizedBox(height: 5),
+                  Text(
+                    'The pattern engine will populate this table from real candle analysis.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white30,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          for (final pattern in detectedPatterns) _patternResultRow(pattern),
+        ],
+      ),
+    );
+  }
+
+  Widget _candlestickSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_cyan),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'CANDLESTICK INTELLIGENCE',
+            style: TextStyle(
+              color: _cyan,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _patternTypeCard('ENGULFING'),
+              _patternTypeCard('PIN BAR'),
+              _patternTypeCard('DOJI'),
+              _patternTypeCard('MORNING STAR'),
+              _patternTypeCard('EVENING STAR'),
+              _patternTypeCard('INSIDE BAR'),
+              _patternTypeCard('HAMMER'),
+              _patternTypeCard('SHOOTING STAR'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _patternTypeCard(String name) {
+    return Container(
+      width: 155,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: Colors.white10,
+        ),
+      ),
+      child: Column(
+        children: [
+          Text(
+            name,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w800,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'READY',
+            style: TextStyle(
+              color: _green,
+              fontWeight: FontWeight.w900,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _patternMetric(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.white10),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white46,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _patternResultRow(Map<String, String> pattern) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              pattern['name'] ?? '--',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              pattern['direction'] ?? '--',
+            ),
+          ),
+          Expanded(
+            child: Text(
+              pattern['confidence'] ?? '--',
+            ),
+          ),
+          Expanded(
+            child: Text(
+              pattern['status'] ?? '--',
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class BreakoutLiquidityScreen extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const BreakoutLiquidityScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<BreakoutLiquidityScreen> createState() =>
+      _BreakoutLiquidityScreenState();
+}
+
+class _BreakoutLiquidityScreenState extends State<BreakoutLiquidityScreen> {
+  bool breakoutDetection = true;
+  bool retestDetection = true;
+  bool failedBreakouts = true;
+  bool liquidityPools = true;
+  bool liquiditySweeps = true;
+  bool stopHunts = true;
+  bool volumeConfirmation = true;
+
+  String breakoutMode = 'BALANCED';
+
+  void _runBreakoutScan() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Breakout + liquidity scan requested. Results will populate from real market structure.',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _DedicatedSmartPage(
+      title: 'BREAKOUT & LIQUIDITY',
+      subtitle:
+          'Breakout validation, retests, liquidity pools, sweeps and failure analysis',
+      symbol: widget.symbol,
+      timeframe: widget.timeframe,
+      price: widget.price,
+      color: _amber,
+      body: Column(
+        children: [
+          LayoutBuilder(
+            builder: (_, constraints) {
+              if (constraints.maxWidth < 900) {
+                return Column(
+                  children: [
+                    _breakoutControls(),
+                    const SizedBox(height: 14),
+                    _breakoutOverview(),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 340,
+                    child: _breakoutControls(),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: _breakoutOverview(),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 14),
+          _liquidityMap(),
+          const SizedBox(height: 14),
+          _breakoutTimeline(),
+        ],
+      ),
+    );
+  }
+
+  Widget _breakoutControls() {
+    return _controlPanel(
+      title: 'BREAKOUT ENGINE CONTROLS',
+      children: [
+        _switchRow(
+          'Breakout Detection',
+          breakoutDetection,
+          (v) => setState(() => breakoutDetection = v),
+        ),
+        _switchRow(
+          'Retest Detection',
+          retestDetection,
+          (v) => setState(() => retestDetection = v),
+        ),
+        _switchRow(
+          'Failed Breakouts',
+          failedBreakouts,
+          (v) => setState(() => failedBreakouts = v),
+        ),
+        _switchRow(
+          'Liquidity Pools',
+          liquidityPools,
+          (v) => setState(() => liquidityPools = v),
+        ),
+        _switchRow(
+          'Liquidity Sweeps',
+          liquiditySweeps,
+          (v) => setState(() => liquiditySweeps = v),
+        ),
+        _switchRow(
+          'Stop-Hunt Detection',
+          stopHunts,
+          (v) => setState(() => stopHunts = v),
+        ),
+        _switchRow(
+          'Volume Confirmation',
+          volumeConfirmation,
+          (v) => setState(() => volumeConfirmation = v),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 6,
+          children: [
+            for (final value in [
+              'STRICT',
+              'BALANCED',
+              'AGGRESSIVE',
+            ])
+              ChoiceChip(
+                label: Text(value),
+                selected: breakoutMode == value,
+                onSelected: (_) {
+                  setState(() {
+                    breakoutMode = value;
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _runBreakoutScan,
+            icon: const Icon(Icons.radar),
+            label: const Text('ANALYZE BREAKOUTS'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _breakoutOverview() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_amber),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'BREAKOUT INTELLIGENCE',
+            style: TextStyle(
+              color: _amber,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _breakoutMetric(
+            'CURRENT PRICE',
+            widget.price > 0 ? widget.price.toStringAsFixed(5) : '--',
+            _cyan,
+          ),
+          _breakoutMetric(
+            'BREAKOUT STATE',
+            'NO CONFIRMED EVENT',
+            _amber,
+          ),
+          _breakoutMetric(
+            'RETEST STATE',
+            'NONE',
+            Colors.white54,
+          ),
+          _breakoutMetric(
+            'LIQUIDITY SWEEP',
+            'NONE DETECTED',
+            Colors.white54,
+          ),
+          _breakoutMetric(
+            'FAILED BREAKOUT',
+            'NONE DETECTED',
+            Colors.white54,
+          ),
+          _breakoutMetric(
+            'ENGINE MODE',
+            breakoutMode,
+            _cyan,
+          ),
+          _breakoutMetric(
+            'STATUS',
+            'READY FOR STRUCTURE DATA',
+            _green,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _liquidityMap() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_cyan),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'LIQUIDITY MAP',
+            style: TextStyle(
+              color: _cyan,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (_, constraints) {
+              final width = constraints.maxWidth >= 800
+                  ? (constraints.maxWidth - 12) / 2
+                  : constraints.maxWidth;
+
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _liquidityCard(
+                      'BUY-SIDE LIQUIDITY',
+                      'Above Current Price',
+                      Icons.arrow_upward,
+                      _green,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _liquidityCard(
+                      'SELL-SIDE LIQUIDITY',
+                      'Below Current Price',
+                      Icons.arrow_downward,
+                      _red,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _liquidityCard(
+                      'EQUAL HIGHS',
+                      'Liquidity Pool Detection',
+                      Icons.horizontal_rule,
+                      _amber,
+                    ),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _liquidityCard(
+                      'EQUAL LOWS',
+                      'Liquidity Pool Detection',
+                      Icons.horizontal_rule,
+                      _cyan,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _breakoutTimeline() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(_amber),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'BREAKOUT EVENT TIMELINE',
+            style: TextStyle(
+              color: _amber,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          SizedBox(height: 14),
+          _BreakoutEvent(
+            title: 'APPROACH',
+            description:
+                'Price approaches an identified support or resistance boundary.',
+          ),
+          _BreakoutEvent(
+            title: 'BREAK ATTEMPT',
+            description:
+                'Price trades through the boundary and confirmation begins.',
+          ),
+          _BreakoutEvent(
+            title: 'CONFIRMATION',
+            description:
+                'Structure, close and supporting conditions validate the break.',
+          ),
+          _BreakoutEvent(
+            title: 'RETEST',
+            description:
+                'The broken level is tested as new support or resistance.',
+          ),
+          _BreakoutEvent(
+            title: 'FAILURE / SWEEP',
+            description:
+                'The move rejects back through the level or sweeps liquidity.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _breakoutMetric(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.white10),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white46,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _liquidityCard(
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .14),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(
+          color: color.withValues(alpha: .20),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            'READY',
+            style: TextStyle(
+              color: _green,
+              fontWeight: FontWeight.w900,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BreakoutEvent extends StatelessWidget {
+  final String title;
+  final String description;
+
+  const _BreakoutEvent({
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(
+              color: _cyan,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 120,
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              description,
+              style: const TextStyle(
+                color: Colors.white46,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MtfConfluenceScreen extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const MtfConfluenceScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<MtfConfluenceScreen> createState() => _MtfConfluenceScreenState();
+}
+
+class _MtfConfluenceScreenState extends State<MtfConfluenceScreen> {
+  bool m1 = true;
+  bool m5 = true;
+  bool m15 = true;
+  bool h1 = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return _DedicatedSmartPage(
+      title: 'MTF & AI CONFLUENCE',
+      subtitle: 'Multi-timeframe confirmation + weighted technical confluence',
+      symbol: widget.symbol,
+      timeframe: widget.timeframe,
+      price: widget.price,
+      color: Colors.purpleAccent,
+      body: Column(
+        children: [
+          _controlPanel(
+            title: 'MULTI-TIMEFRAME ANALYSIS',
+            children: [
+              _switchRow(
+                'M1',
+                m1,
+                (v) => setState(() => m1 = v),
+              ),
+              _switchRow(
+                'M5',
+                m5,
+                (v) => setState(() => m5 = v),
+              ),
+              _switchRow(
+                'M15',
+                m15,
+                (v) => setState(() => m15 = v),
+              ),
+              _switchRow(
+                'H1',
+                h1,
+                (v) => setState(() => h1 = v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _infoGrid(
+            const [
+              ['TREND SCORE', '--'],
+              ['STRUCTURE SCORE', '--'],
+              ['MOMENTUM SCORE', '--'],
+              ['PATTERN SCORE', '--'],
+              ['LIQUIDITY SCORE', '--'],
+              ['AI CONFLUENCE', '-- / 100'],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DukeTechnicalAiScreen extends StatefulWidget {
+  final String symbol;
+  final String timeframe;
+  final double price;
+
+  const DukeTechnicalAiScreen({
+    super.key,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+  });
+
+  @override
+  State<DukeTechnicalAiScreen> createState() => _DukeTechnicalAiScreenState();
+}
+
+class _DukeTechnicalAiScreenState extends State<DukeTechnicalAiScreen> {
+  final commandController = TextEditingController();
+
+  String mode = 'AI ASSIST';
+  String message =
+      'Duke Technical AI command interface ready for engine wiring.';
+
+  @override
+  void dispose() {
+    commandController.dispose();
+    super.dispose();
+  }
+
+  void _queueCommand(String command) {
+    setState(() {
+      message = 'COMMAND SELECTED: $command\n'
+          'Chart-action wiring will execute through the Smart Analysis engine.';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _DedicatedSmartPage(
+      title: 'DUKE TECHNICAL AI',
+      subtitle: 'Natural-language AI technical-analysis command center',
+      symbol: widget.symbol,
+      timeframe: widget.timeframe,
+      price: widget.price,
+      color: Colors.lightBlueAccent,
+      body: Column(
+        children: [
+          _analysisMode(
+            mode,
+            (value) {
+              setState(() {
+                mode = value;
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _boxDecoration(_cyan),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'AI COMMAND CENTER',
+                  style: TextStyle(
+                    color: _cyan,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: commandController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    hintText:
+                        'Example: Analyze this chart and draw the strongest levels...',
+                    hintStyle: TextStyle(
+                      color: Colors.white30,
+                    ),
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (value) {
+                    if (value.trim().isNotEmpty) {
+                      _queueCommand(value.trim());
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _commandButton(
+                      'ANALYZE CHART',
+                      () => _queueCommand('ANALYZE CHART'),
+                    ),
+                    _commandButton(
+                      'DRAW KEY LEVELS',
+                      () => _queueCommand('DRAW KEY LEVELS'),
+                    ),
+                    _commandButton(
+                      'FIND PATTERNS',
+                      () => _queueCommand('FIND PATTERNS'),
+                    ),
+                    _commandButton(
+                      'FIND BREAKOUT',
+                      () => _queueCommand('FIND BREAKOUT'),
+                    ),
+                    _commandButton(
+                      'RUN MTF',
+                      () => _queueCommand('RUN MTF'),
+                    ),
+                    _commandButton(
+                      'CLEAN CHART',
+                      () => _queueCommand('CLEAN CHART'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .20),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    message,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _commandButton(
+    String title,
+    VoidCallback onPressed,
+  ) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      child: Text(title),
+    );
+  }
+}
+
+class _DedicatedSmartPage extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final String symbol;
+  final String timeframe;
+  final double price;
+  final Color color;
+  final Widget body;
+
+  const _DedicatedSmartPage({
+    required this.title,
+    required this.subtitle,
+    required this.symbol,
+    required this.timeframe,
+    required this.price,
+    required this.color,
+    required this.body,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _panel,
+        foregroundColor: Colors.white,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                color: Colors.white38,
+                fontSize: 9,
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: _boxDecoration(color),
+            child: Wrap(
+              spacing: 28,
+              runSpacing: 8,
+              children: [
+                _miniMetric(
+                  'SYMBOL',
+                  symbol,
+                  color,
+                ),
+                _miniMetric(
+                  'TIMEFRAME',
+                  timeframe,
+                  color,
+                ),
+                _miniMetric(
+                  'PRICE',
+                  price > 0 ? price.toStringAsFixed(5) : '--',
+                  color,
+                ),
+                _miniMetric(
+                  'PAGE',
+                  title,
+                  color,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          body,
+        ],
+      ),
+    );
+  }
+}
+
+Widget _analysisMode(
+  String current,
+  ValueChanged<String> onChanged,
+) {
+  const modes = [
+    'MANUAL',
+    'AI ASSIST',
+    'FULL AUTO',
+  ];
+
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: _boxDecoration(_cyan),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'ANALYSIS MODE',
+          style: TextStyle(
+            color: _cyan,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final mode in modes)
+              ChoiceChip(
+                label: Text(mode),
+                selected: current == mode,
+                onSelected: (_) => onChanged(mode),
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _controlPanel({
+  required String title,
+  required List<Widget> children,
+}) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(15),
+    decoration: _boxDecoration(_cyan),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: _cyan,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...children,
+      ],
+    ),
+  );
+}
+
+Widget _switchRow(
+  String title,
+  bool value,
+  ValueChanged<bool> onChanged,
+) {
+  return Container(
+    padding: const EdgeInsets.symmetric(
+      vertical: 5,
+    ),
+    decoration: const BoxDecoration(
+      border: Border(
+        bottom: BorderSide(
+          color: Colors.white10,
+        ),
+      ),
+    ),
+    child: SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      title: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      value: value,
+      onChanged: onChanged,
+    ),
+  );
+}
+
+Widget _infoGrid(
+  List<List<String>> rows,
+) {
+  return LayoutBuilder(
+    builder: (_, constraints) {
+      final width = constraints.maxWidth >= 800
+          ? (constraints.maxWidth - 12) / 2
+          : constraints.maxWidth;
+
+      return Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          for (final row in rows)
+            SizedBox(
+              width: width,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: _boxDecoration(_cyan),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        row[0],
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      row[1],
+                      style: const TextStyle(
+                        color: _cyan,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+Widget _engineStatus(
+  String title,
+  String status,
+) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: _boxDecoration(_amber),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.engineering,
+          color: _amber,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                status,
+                style: const TextStyle(
+                  color: Colors.white54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _miniMetric(
+  String label,
+  String value,
+  Color color,
+) {
+  return SizedBox(
+    width: 180,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white30,
+            fontSize: 9,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+BoxDecoration _boxDecoration(
+  Color color,
+) {
+  return BoxDecoration(
+    color: _panel,
+    borderRadius: BorderRadius.circular(8),
+    border: Border.all(
+      color: color.withValues(alpha: .22),
+    ),
+  );
+}

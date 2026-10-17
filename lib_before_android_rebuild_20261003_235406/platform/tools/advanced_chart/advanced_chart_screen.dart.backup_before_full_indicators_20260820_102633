@@ -1,0 +1,1932 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+import 'chart_tick_store.dart';
+
+class AdvancedChartScreen extends StatefulWidget {
+  final String Function() symbolProvider;
+  final String Function() timeframeProvider;
+  final double Function() priceProvider;
+  final List<double> Function() historyProvider;
+
+  const AdvancedChartScreen({
+    super.key,
+    required this.symbolProvider,
+    required this.timeframeProvider,
+    required this.priceProvider,
+    required this.historyProvider,
+  });
+
+  @override
+  State<AdvancedChartScreen> createState() => _AdvancedChartScreenState();
+}
+
+class _ChartTick {
+  final DateTime time;
+  final double price;
+
+  const _ChartTick({
+    required this.time,
+    required this.price,
+  });
+}
+
+class _OhlcCandle {
+  final DateTime bucket;
+  final double open;
+  final double high;
+  final double low;
+  final double close;
+
+  const _OhlcCandle({
+    required this.bucket,
+    required this.open,
+    required this.high,
+    required this.low,
+    required this.close,
+  });
+
+  bool get bullish => close >= open;
+}
+
+class _AdvancedChartScreenState extends State<AdvancedChartScreen> {
+  static const bg = Color(0xFF020811);
+  static const panel = Color(0xFF06121E);
+  static const panel2 = Color(0xFF081A29);
+
+  static const cyan = Color(0xFF00E5FF);
+  static const green = Color(0xFF27FF88);
+  static const red = Color(0xFFFF4057);
+  static const amber = Color(0xFFFFD23F);
+  static const purple = Color(0xFF9A5CFF);
+
+  Timer? refreshTimer;
+
+  final List<_ChartTick> _chartTicks = <_ChartTick>[];
+  double? _lastCapturedPrice;
+
+  String? _activeHistorySymbol;
+  String? _activeHistoryTimeframe;
+  int _historyRequestId = 0;
+
+  int selectedBottomTab = 0;
+  bool showGrid = true;
+  bool showCrosshair = true;
+
+  late String _chartSymbol;
+  late String _chartTimeframe;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _chartSymbol = widget.symbolProvider();
+    _chartTimeframe = widget.timeframeProvider().toUpperCase();
+
+    _activeHistorySymbol = _chartSymbol;
+    _activeHistoryTimeframe = _chartTimeframe;
+
+    _loadChartHistory();
+
+    refreshTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) {
+        if (!mounted) return;
+
+        _syncChartContext();
+        _captureLiveTick();
+
+        setState(() {});
+      },
+    );
+  }
+
+  double _chartZoom = 1.0;
+
+  void _zoomIn() {
+    setState(() {
+      _chartZoom = (_chartZoom * 1.35).clamp(1.0, 8.0);
+    });
+  }
+
+  void _zoomOut() {
+    setState(() {
+      _chartZoom = (_chartZoom / 1.35).clamp(1.0, 8.0);
+    });
+  }
+
+  void _resetChartZoom() {
+    setState(() {
+      _chartZoom = 1.0;
+    });
+  }
+
+  void _syncChartContext() {
+    // Chart page owns its pair/timeframe while open.
+  }
+
+  Future<void> _loadChartHistory() async {
+    final requestId = ++_historyRequestId;
+    final requestedSymbol = _chartSymbol;
+    final requestedTimeframe = _chartTimeframe;
+
+    await ChartTickStore.loadSymbol(requestedSymbol);
+
+    if (requestId != _historyRequestId) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (requestedTimeframe != 'M1') {
+      return;
+    }
+
+    try {
+      final cleanSymbol =
+          requestedSymbol.toUpperCase().replaceAll('/', '').replaceAll(' ', '');
+
+      final uri = Uri.https(
+        'bridge.sciool.net',
+        '/history/$cleanSymbol',
+        {'count': '60'},
+      );
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+
+      if (requestId != _historyRequestId ||
+          requestedSymbol != _chartSymbol ||
+          requestedTimeframe != _chartTimeframe) {
+        return;
+      }
+
+      if (response.statusCode != 200) {
+        debugPrint(
+          'ADV CHART HISTORY HTTP ${response.statusCode} $cleanSymbol',
+        );
+        return;
+      }
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! Map) {
+        return;
+      }
+
+      final rawCandles = decoded['candles'];
+
+      if (rawCandles is! List) {
+        return;
+      }
+
+      final incoming = <ChartCandleRecord>[];
+
+      for (final item in rawCandles) {
+        if (item is! Map) {
+          continue;
+        }
+
+        final timestamp = item['timestamp'];
+        final open = item['open'];
+        final high = item['high'];
+        final low = item['low'];
+        final close = item['close'];
+
+        if (timestamp is! num ||
+            open is! num ||
+            high is! num ||
+            low is! num ||
+            close is! num) {
+          continue;
+        }
+
+        final time = DateTime.fromMillisecondsSinceEpoch(
+          (timestamp.toDouble() * 1000).round(),
+        );
+
+        final bucket = DateTime(
+          time.year,
+          time.month,
+          time.day,
+          time.hour,
+          time.minute,
+        );
+
+        incoming.add(
+          ChartCandleRecord(
+            bucket: bucket,
+            open: open.toDouble(),
+            high: high.toDouble(),
+            low: low.toDouble(),
+            close: close.toDouble(),
+          ),
+        );
+      }
+
+      if (incoming.isEmpty) {
+        return;
+      }
+
+      await ChartTickStore.mergeCandles(
+        requestedSymbol,
+        incoming,
+      );
+
+      debugPrint(
+        'ADV CHART HISTORY loaded $cleanSymbol candles=${incoming.length}',
+      );
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (error) {
+      debugPrint(
+        'ADV CHART HISTORY error: $error',
+      );
+    }
+  }
+
+  Future<void> _showPairPicker() async {
+    const pairs = <String>[
+      'EURUSD',
+      'EURUSD_OTC',
+      'GBPUSD',
+      'GBPUSD_OTC',
+      'USDJPY',
+      'USDJPY_OTC',
+      'AUDUSD',
+      'AUDUSD_OTC',
+      'USDCHF',
+      'USDCAD',
+      'NZDUSD',
+      'EURGBP',
+    ];
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return SimpleDialog(
+          backgroundColor: panel,
+          title: const Text(
+            'SELECT PAIR',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          children: [
+            for (final pair in pairs)
+              SimpleDialogOption(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(pair);
+                },
+                child: Row(
+                  children: [
+                    Icon(
+                      pair == _chartSymbol
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: pair == _chartSymbol ? cyan : Colors.white38,
+                      size: 17,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      pair.replaceAll('_', ' '),
+                      style: TextStyle(
+                        color: pair == _chartSymbol ? cyan : Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || selected == null || selected == _chartSymbol) {
+      return;
+    }
+
+    setState(() {
+      _chartSymbol = selected;
+      _chartTicks.clear();
+      _lastCapturedPrice = null;
+      _activeHistorySymbol = selected;
+    });
+
+    await _loadChartHistory();
+  }
+
+  Future<void> _showTimeframePicker() async {
+    const frames = <String>[
+      'M1',
+      'M5',
+      'M15',
+      'M30',
+      'M45',
+      'H1',
+      'H2',
+      'H4',
+      'H8',
+      'D1',
+      'W1',
+      'MN1',
+    ];
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return SimpleDialog(
+          backgroundColor: panel,
+          title: const Text(
+            'SELECT TIMEFRAME',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          children: [
+            for (final frame in frames)
+              SimpleDialogOption(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(frame);
+                },
+                child: Row(
+                  children: [
+                    Icon(
+                      frame == _chartTimeframe
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: frame == _chartTimeframe ? purple : Colors.white38,
+                      size: 17,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      frame,
+                      style: TextStyle(
+                        color: frame == _chartTimeframe ? purple : Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || selected == null || selected == _chartTimeframe) {
+      return;
+    }
+
+    setState(() {
+      _chartTimeframe = selected;
+      _chartTicks.clear();
+      _lastCapturedPrice = null;
+      _activeHistoryTimeframe = selected;
+    });
+
+    await _loadChartHistory();
+  }
+
+  @override
+  void dispose() {
+    refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  String get symbol => _chartSymbol;
+
+  String get timeframe => _chartTimeframe;
+
+  double get currentPrice {
+    final liveTicks = ChartTickStore.forSymbol(symbol);
+
+    if (liveTicks.isNotEmpty) {
+      return liveTicks.last.price;
+    }
+
+    final saved = ChartTickStore.savedCandles(symbol);
+
+    if (saved.isNotEmpty) {
+      return saved.last.close;
+    }
+
+    if (symbol == widget.symbolProvider()) {
+      return widget.priceProvider();
+    }
+
+    return 0.0;
+  }
+
+  List<double> get priceHistory {
+    final liveTicks = ChartTickStore.forSymbol(symbol);
+
+    final raw = liveTicks.isNotEmpty
+        ? liveTicks.map((tick) => tick.price).toList()
+        : symbol == widget.symbolProvider()
+            ? widget.historyProvider()
+            : ChartTickStore.savedCandles(symbol)
+                .map((candle) => candle.close)
+                .toList();
+
+    // Chart-only validation.
+    // This does NOT alter scanner history or the market-data feed.
+    final valid = raw
+        .where(
+          (value) => value.isFinite && value > 0,
+        )
+        .toList();
+
+    if (valid.length < 3) {
+      return valid;
+    }
+
+    // Median gives us a robust center even if one bad tick exists.
+    final sorted = List<double>.from(valid)..sort();
+    final median = sorted[sorted.length ~/ 2];
+
+    if (!median.isFinite || median <= 0) {
+      return valid;
+    }
+
+    // Reject only extreme malformed ticks.
+    // A +/- 20% window is intentionally wide so legitimate
+    // market movement remains untouched.
+    final lowerBound = median * 0.80;
+    final upperBound = median * 1.20;
+
+    final cleaned = valid
+        .where(
+          (value) => value >= lowerBound && value <= upperBound,
+        )
+        .toList();
+
+    final result = cleaned.length >= 2 ? cleaned : valid;
+
+    final limited =
+        result.length <= 180 ? result : result.sublist(result.length - 180);
+
+    if (limited.isNotEmpty) {
+      final chartLow = limited.reduce(math.min);
+      final chartHigh = limited.reduce(math.max);
+
+      debugPrint(
+        'ADV CHART $symbol '
+        'raw=${raw.length} '
+        'clean=${limited.length} '
+        'low=$chartLow '
+        'high=$chartHigh '
+        'last=${limited.last}',
+      );
+    }
+
+    return limited;
+  }
+
+  void _captureLiveTick() {
+    final value = currentPrice;
+
+    if (!value.isFinite || value <= 0) {
+      return;
+    }
+
+    final now = DateTime.now();
+
+    if (_chartTicks.isNotEmpty &&
+        _lastCapturedPrice == value &&
+        now.difference(_chartTicks.last.time).inMilliseconds < 1000) {
+      return;
+    }
+
+    _lastCapturedPrice = value;
+
+    _chartTicks.add(
+      _ChartTick(
+        time: now,
+        price: value,
+      ),
+    );
+
+    final cutoff = now.subtract(
+      const Duration(hours: 3),
+    );
+
+    _chartTicks.removeWhere(
+      (tick) => tick.time.isBefore(cutoff),
+    );
+  }
+
+  DateTime _minuteBucket(DateTime time) {
+    return DateTime(
+      time.year,
+      time.month,
+      time.day,
+      time.hour,
+      time.minute,
+    );
+  }
+
+  List<_OhlcCandle> get candles {
+    final saved = ChartTickStore.savedCandles(symbol);
+
+    final merged = <DateTime, _OhlcCandle>{};
+
+    for (final candle in saved) {
+      merged[candle.bucket] = _OhlcCandle(
+        bucket: candle.bucket,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+      );
+    }
+
+    final persistentTicks = ChartTickStore.forSymbol(symbol);
+
+    final source = persistentTicks.isNotEmpty
+        ? persistentTicks
+            .map(
+              (tick) => _ChartTick(
+                time: tick.time,
+                price: tick.price,
+              ),
+            )
+            .toList()
+        : List<_ChartTick>.from(_chartTicks);
+
+    final grouped = <DateTime, List<_ChartTick>>{};
+
+    for (final tick in source) {
+      final bucket = _minuteBucket(tick.time);
+
+      grouped
+          .putIfAbsent(
+            bucket,
+            () => <_ChartTick>[],
+          )
+          .add(tick);
+    }
+
+    final buckets = grouped.keys.toList()..sort();
+
+    for (final bucket in buckets) {
+      final ticks = grouped[bucket]!;
+
+      if (ticks.isEmpty) continue;
+
+      double high = ticks.first.price;
+      double low = ticks.first.price;
+
+      for (final tick in ticks) {
+        if (tick.price > high) {
+          high = tick.price;
+        }
+
+        if (tick.price < low) {
+          low = tick.price;
+        }
+      }
+
+      merged[bucket] = _OhlcCandle(
+        bucket: bucket,
+        open: ticks.first.price,
+        high: high,
+        low: low,
+        close: ticks.last.price,
+      );
+    }
+
+    final result = merged.values.toList()
+      ..sort(
+        (a, b) => a.bucket.compareTo(b.bucket),
+      );
+
+    if (result.length <= 60) {
+      return result;
+    }
+
+    return result.sublist(
+      result.length - 60,
+    );
+  }
+
+  int get candleSecondsRemaining {
+    final seconds = DateTime.now().second;
+
+    return 60 - seconds;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _topToolbar(),
+            Expanded(
+              child: Row(
+                children: [
+                  _drawingToolbar(),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: _chartPanel(),
+                        ),
+                        _bottomPanel(),
+                      ],
+                    ),
+                  ),
+                  _aiPanel(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _topToolbar() {
+    return Container(
+      height: 88,
+      color: const Color(0xFF070A0F),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 48,
+            child: Row(
+              children: [
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Back',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                ),
+                const Icon(
+                  Icons.candlestick_chart,
+                  color: cyan,
+                  size: 18,
+                ),
+                const SizedBox(width: 7),
+                const Text(
+                  '999 CHART',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .7,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                _tvWorkspaceButton(
+                  icon: Icons.currency_exchange,
+                  label: symbol.replaceAll('_', ' '),
+                  color: cyan,
+                  onTap: _showPairPicker,
+                ),
+                const SizedBox(width: 5),
+                _tvWorkspaceButton(
+                  icon: Icons.schedule,
+                  label: timeframe,
+                  color: purple,
+                  onTap: _showTimeframePicker,
+                ),
+                const SizedBox(width: 5),
+                Container(
+                  height: 32,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF11161E),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Text(
+                    currentPrice > 0
+                        ? currentPrice.toStringAsFixed(5)
+                        : 'WAITING',
+                    style: TextStyle(
+                      color: currentPrice > 0 ? green : amber,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                _tvSmallIcon(Icons.undo, 'Undo'),
+                _tvSmallIcon(Icons.redo, 'Redo'),
+                _tvSmallIcon(Icons.camera_alt_outlined, 'Snapshot'),
+                _toggleButton(
+                  Icons.grid_4x4,
+                  'GRID',
+                  showGrid,
+                  () {
+                    setState(() {
+                      showGrid = !showGrid;
+                    });
+                  },
+                ),
+                _toggleButton(
+                  Icons.control_camera,
+                  'CROSSHAIR',
+                  showCrosshair,
+                  () {
+                    setState(() {
+                      showCrosshair = !showCrosshair;
+                    });
+                  },
+                ),
+                const SizedBox(width: 7),
+              ],
+            ),
+          ),
+          Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            decoration: const BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.white10),
+              ),
+            ),
+            child: Row(
+              children: [
+                _tvMenuItem(
+                  Icons.candlestick_chart,
+                  'Candles',
+                  true,
+                ),
+                _tvMenuItem(
+                  Icons.functions,
+                  'Indicators',
+                  false,
+                ),
+                _tvMenuItem(
+                  Icons.bar_chart,
+                  'Volume',
+                  false,
+                ),
+                _tvMenuItem(
+                  Icons.compare_arrows,
+                  'Compare',
+                  false,
+                ),
+                _tvMenuItem(
+                  Icons.notifications_none,
+                  'Alert',
+                  false,
+                ),
+                _tvMenuItem(
+                  Icons.replay,
+                  'Replay',
+                  false,
+                ),
+                _tvMenuItem(
+                  Icons.layers_outlined,
+                  'Layouts',
+                  false,
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: green.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                      color: green.withValues(alpha: .24),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        color: green,
+                        size: 6,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'LIVE',
+                        style: TextStyle(
+                          color: green,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tvWorkspaceButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
+        borderRadius: BorderRadius.circular(5),
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFF11161E),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 13,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 3),
+              Icon(
+                Icons.keyboard_arrow_down,
+                color: color,
+                size: 13,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tvSmallIcon(
+    IconData icon,
+    String tooltip,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: () {},
+        mouseCursor: SystemMouseCursors.click,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          icon,
+          color: Colors.white54,
+          size: 16,
+        ),
+      ),
+    );
+  }
+
+  Widget _tvMenuItem(
+    IconData icon,
+    String label,
+    bool active,
+  ) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(milliseconds: 600),
+              content: Text('$label selected'),
+            ),
+          );
+        },
+        mouseCursor: SystemMouseCursors.click,
+        borderRadius: BorderRadius.circular(5),
+        child: Container(
+          height: 29,
+          margin: const EdgeInsets.only(right: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: active
+                ? Colors.white.withValues(alpha: .08)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: 13,
+                color: active ? cyan : Colors.white54,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: active ? Colors.white : Colors.white60,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusBox(
+    String value,
+    IconData icon,
+    Color color, {
+    VoidCallback? onTap,
+  }) {
+    final content = Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 9),
+      decoration: BoxDecoration(
+        color: panel2,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: color.withValues(alpha: .30),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: 13,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            Icon(
+              Icons.keyboard_arrow_down,
+              color: color,
+              size: 14,
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (onTap == null) {
+      return content;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
+        borderRadius: BorderRadius.circular(6),
+        child: content,
+      ),
+    );
+  }
+
+  Widget _toggleButton(
+    IconData icon,
+    String label,
+    bool active,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        height: 34,
+        margin: const EdgeInsets.only(left: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: active ? cyan.withValues(alpha: .08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: active ? cyan.withValues(alpha: .35) : Colors.white10,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: active ? cyan : Colors.white38,
+              size: 13,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? cyan : Colors.white38,
+                fontSize: 8,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _drawingToolbar() {
+    const tools = <(IconData, String)>[
+      (Icons.near_me_outlined, 'Cursor'),
+      (Icons.control_camera, 'Crosshair'),
+      (Icons.show_chart, 'Trend Line'),
+      (Icons.horizontal_rule, 'Horizontal Line'),
+      (Icons.vertical_align_center, 'Vertical Line'),
+      (Icons.polyline_outlined, 'Ray'),
+      (Icons.stacked_line_chart, 'Fibonacci'),
+      (Icons.crop_square, 'Rectangle'),
+      (Icons.brush_outlined, 'Brush'),
+      (Icons.text_fields, 'Text'),
+      (Icons.straighten, 'Measure'),
+      (Icons.favorite_border, 'Favorites'),
+      (Icons.delete_outline, 'Delete'),
+    ];
+
+    return Container(
+      width: 46,
+      color: const Color(0xFF070A0F),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        children: [
+          for (final tool in tools)
+            Tooltip(
+              message: tool.$2,
+              child: SizedBox(
+                height: 39,
+                child: IconButton(
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(milliseconds: 600),
+                        content: Text('${tool.$2} selected'),
+                      ),
+                    );
+                  },
+                  mouseCursor: SystemMouseCursors.click,
+                  icon: Icon(
+                    tool.$1,
+                    size: 18,
+                    color: Colors.white60,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartZoomButton({
+    IconData? icon,
+    String? label,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
+          borderRadius: BorderRadius.circular(5),
+          child: Container(
+            height: 30,
+            constraints: const BoxConstraints(
+              minWidth: 34,
+            ),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+            ),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFF11161E),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: Colors.white10,
+              ),
+            ),
+            child: icon != null
+                ? Icon(
+                    icon,
+                    size: 16,
+                    color: cyan,
+                  )
+                : Text(
+                    label ?? '',
+                    style: const TextStyle(
+                      color: cyan,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chartPanel() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8, 8, 6, 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF030B13),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: cyan.withValues(alpha: .22),
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _CandlestickPainter(
+                candles: candles,
+                currentPrice: currentPrice,
+                showGrid: showGrid,
+                zoom: _chartZoom,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            top: 10,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$symbol • $timeframe',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const Text(
+                  '999 PROFESSIONAL MARKET CHART',
+                  style: TextStyle(
+                    color: cyan,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            right: 12,
+            top: 10,
+            child: Text(
+              currentPrice > 0
+                  ? currentPrice.toStringAsFixed(5)
+                  : 'WAITING FOR PRICE',
+              style: TextStyle(
+                color: currentPrice > 0 ? green : amber,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          Positioned(
+            right: 12,
+            top: 34,
+            child: Container(
+              decoration: BoxDecoration(
+                color: panel.withValues(alpha: .92),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: cyan.withValues(alpha: .30),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _chartZoomButton(
+                    icon: Icons.remove,
+                    tooltip: 'Zoom out',
+                    onTap: _zoomOut,
+                  ),
+                  _chartZoomButton(
+                    label: _chartZoom == 1.0
+                        ? 'AUTO'
+                        : '${_chartZoom.toStringAsFixed(1)}x',
+                    tooltip: 'Reset automatic scale',
+                    onTap: _resetChartZoom,
+                  ),
+                  _chartZoomButton(
+                    icon: Icons.add,
+                    tooltip: 'Zoom in',
+                    onTap: _zoomIn,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (candles.isEmpty)
+            const Center(
+              child: Text(
+                'BUILDING LIVE M1 CANDLE...',
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          if (showCrosshair)
+            const Center(
+              child: Icon(
+                Icons.add,
+                color: Colors.white24,
+                size: 18,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _aiPanel() {
+    final values = priceHistory;
+
+    double change = 0;
+
+    if (values.length > 1 && values.first != 0) {
+      change = ((values.last - values.first) / values.first) * 100;
+    }
+
+    final bullish = change >= 0;
+
+    return Container(
+      width: 225,
+      margin: const EdgeInsets.fromLTRB(0, 8, 8, 5),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: purple.withValues(alpha: .30),
+        ),
+      ),
+      child: ListView(
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.psychology,
+                color: purple,
+                size: 18,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'AI CHART INTELLIGENCE',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _intelRow('PAIR', symbol, cyan),
+          _intelRow('TIMEFRAME', timeframe, cyan),
+          _intelRow(
+            'PRICE',
+            currentPrice > 0 ? currentPrice.toStringAsFixed(5) : '--',
+            green,
+          ),
+          _intelRow(
+            'TRACE TREND',
+            bullish ? 'BULLISH' : 'BEARISH',
+            bullish ? green : red,
+          ),
+          _intelRow(
+            'CHANGE',
+            '${change >= 0 ? '+' : ''}${change.toStringAsFixed(3)}%',
+            bullish ? green : red,
+          ),
+          _intelRow(
+            'LIVE POINTS',
+            '${values.length}',
+            amber,
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: purple.withValues(alpha: .06),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color: purple.withValues(alpha: .25),
+              ),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'DUKE ANALYSIS',
+                  style: TextStyle(
+                    color: purple,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'Live chart connected to the existing market state. '
+                  'Scanner intelligence will be layered into this panel '
+                  'after the chart foundation is confirmed.',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 9,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _intelRow(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 5),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 7,
+      ),
+      decoration: BoxDecoration(
+        color: panel2,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white38,
+                fontSize: 8,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomPanel() {
+    const tabs = [
+      'OVERVIEW',
+      'INDICATORS',
+      'SCANNER',
+      'MARKET STRUCTURE',
+      'SIGNAL HISTORY',
+    ];
+
+    return Container(
+      height: 118,
+      margin: const EdgeInsets.fromLTRB(8, 0, 6, 8),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: cyan.withValues(alpha: .18),
+        ),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 36,
+            child: Row(
+              children: [
+                for (int i = 0; i < tabs.length; i++)
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          selectedBottomTab = i;
+                        });
+                      },
+                      child: Center(
+                        child: Text(
+                          tabs[i],
+                          style: TextStyle(
+                            color:
+                                selectedBottomTab == i ? cyan : Colors.white38,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _bottomBody(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomBody() {
+    if (selectedBottomTab == 1) {
+      return _centerMessage(
+        'INDICATORS',
+        'Indicator engine connects here.',
+      );
+    }
+
+    if (selectedBottomTab == 2) {
+      return _centerMessage(
+        'SCANNER',
+        'Direction • Confidence • Setup • Momentum',
+      );
+    }
+
+    if (selectedBottomTab == 3) {
+      return _centerMessage(
+        'MARKET STRUCTURE',
+        'Trend • Support • Resistance • Break of Structure',
+      );
+    }
+
+    if (selectedBottomTab == 4) {
+      return _centerMessage(
+        'SIGNAL HISTORY',
+        'Resolved $symbol signals will appear here.',
+      );
+    }
+
+    final values = priceHistory;
+
+    final high = values.isEmpty ? 0.0 : values.reduce(math.max);
+
+    final low = values.isEmpty ? 0.0 : values.reduce(math.min);
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _metric(
+          'CURRENT',
+          currentPrice > 0 ? currentPrice.toStringAsFixed(5) : '--',
+          green,
+        ),
+        _metric(
+          'TRACE HIGH',
+          high > 0 ? high.toStringAsFixed(5) : '--',
+          cyan,
+        ),
+        _metric(
+          'TRACE LOW',
+          low > 0 ? low.toStringAsFixed(5) : '--',
+          red,
+        ),
+        _metric(
+          'POINTS',
+          '${values.length}',
+          amber,
+        ),
+        _metric(
+          'TIMEFRAME',
+          timeframe,
+          purple,
+        ),
+      ],
+    );
+  }
+
+  Widget _centerMessage(
+    String title,
+    String text,
+  ) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: cyan,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 9,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metric(
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white38,
+            fontSize: 7,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CandlestickPainter extends CustomPainter {
+  final List<_OhlcCandle> candles;
+  final double currentPrice;
+  final bool showGrid;
+  final double zoom;
+
+  const _CandlestickPainter({
+    required this.candles,
+    required this.currentPrice,
+    required this.showGrid,
+    required this.zoom,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const leftPad = 16.0;
+    const rightPad = 72.0;
+    const topPad = 30.0;
+    const bottomPad = 30.0;
+
+    final chartWidth = math.max(1.0, size.width - leftPad - rightPad);
+
+    final chartHeight = math.max(1.0, size.height - topPad - bottomPad);
+
+    if (showGrid) {
+      final gridPaint = Paint()
+        ..color = Colors.white.withValues(alpha: .045)
+        ..strokeWidth = 1;
+
+      for (int i = 0; i <= 10; i++) {
+        final x = leftPad + chartWidth * i / 10;
+
+        canvas.drawLine(
+          Offset(x, topPad),
+          Offset(x, topPad + chartHeight),
+          gridPaint,
+        );
+      }
+
+      for (int i = 0; i <= 8; i++) {
+        final y = topPad + chartHeight * i / 8;
+
+        canvas.drawLine(
+          Offset(leftPad, y),
+          Offset(leftPad + chartWidth, y),
+          gridPaint,
+        );
+      }
+    }
+
+    if (candles.isEmpty) {
+      return;
+    }
+
+    // Pocket Option-style vertical autoscaling.
+    //
+    // Scale from recent valid candles instead of allowing one malformed
+    // historical OHLC value to flatten the entire chart.
+    final scaleCandles =
+        candles.length <= 40 ? candles : candles.sublist(candles.length - 40);
+
+    final closeValues = scaleCandles
+        .map((candle) => candle.close)
+        .where((value) => value.isFinite && value > 0)
+        .toList()
+      ..sort();
+
+    final centerReference = closeValues.isNotEmpty
+        ? closeValues[closeValues.length ~/ 2]
+        : currentPrice;
+
+    // Forex safety envelope. Reject chart-only OHLC outliers farther than
+    // 5% from the recent median. This does NOT modify stored market data.
+    final lowerValid =
+        centerReference > 0 ? centerReference * 0.95 : double.negativeInfinity;
+
+    final upperValid =
+        centerReference > 0 ? centerReference * 1.05 : double.infinity;
+
+    final validCandles = scaleCandles.where((candle) {
+      return candle.open.isFinite &&
+          candle.high.isFinite &&
+          candle.low.isFinite &&
+          candle.close.isFinite &&
+          candle.open > 0 &&
+          candle.high > 0 &&
+          candle.low > 0 &&
+          candle.close > 0 &&
+          candle.open >= lowerValid &&
+          candle.open <= upperValid &&
+          candle.high >= lowerValid &&
+          candle.high <= upperValid &&
+          candle.low >= lowerValid &&
+          candle.low <= upperValid &&
+          candle.close >= lowerValid &&
+          candle.close <= upperValid;
+    }).toList();
+
+    final scaleSource = validCandles.length >= 2 ? validCandles : scaleCandles;
+
+    double low = scaleSource.first.low;
+    double high = scaleSource.first.high;
+
+    for (final candle in scaleSource) {
+      if (candle.low < low) low = candle.low;
+      if (candle.high > high) high = candle.high;
+    }
+
+    if (currentPrice.isFinite &&
+        currentPrice > 0 &&
+        currentPrice >= lowerValid &&
+        currentPrice <= upperValid) {
+      if (currentPrice < low) low = currentPrice;
+      if (currentPrice > high) high = currentPrice;
+    }
+
+    var range = high - low;
+
+    if (range.abs() < 0.0000001) {
+      final center = currentPrice > 0 ? currentPrice : high;
+      final padding = math.max(center.abs() * 0.00015, 0.00005);
+
+      low = center - padding;
+      high = center + padding;
+      range = high - low;
+    } else {
+      // A little breathing room above/below the visible movement.
+      final padding = range * 0.10;
+      low -= padding;
+      high += padding;
+      range = high - low;
+    }
+
+    // Manual vertical zoom.
+    //
+    // 1.0 = AUTO
+    // Higher values magnify the real candle movement around the center.
+    if (zoom > 1.0 && range > 0) {
+      final center = (high + low) / 2.0;
+      final zoomedRange = range / zoom;
+
+      low = center - zoomedRange / 2.0;
+      high = center + zoomedRange / 2.0;
+      range = high - low;
+    }
+
+    double yFor(double price) {
+      final normalized = (price - low) / range;
+
+      return topPad + chartHeight * (1.0 - normalized);
+    }
+
+    final count = candles.length;
+
+    // Pocket Option-style chart density.
+    //
+    // Keep a minimum of 24 horizontal candle slots visible so a small
+    // amount of live history does not get stretched across the chart.
+    // This changes rendering only -- market data and bridge are untouched.
+    final visibleSlots = math.max(count, 64);
+
+    final slotWidth = chartWidth / visibleSlots;
+
+    // Slimmer bodies with tighter spacing, closer to Pocket Option.
+    final bodyWidth = math.max(
+      2.5,
+      math.min(6.5, slotWidth * 0.90),
+    );
+
+    final usedWidth = slotWidth * count;
+
+    // Keep newest candles anchored toward the right side.
+    final startX = leftPad + math.max(0.0, chartWidth - usedWidth);
+
+    for (int i = 0; i < count; i++) {
+      final candle = candles[i];
+
+      final x = startX + slotWidth * i + slotWidth / 2;
+
+      final bullish = candle.close >= candle.open;
+
+      final color = bullish ? const Color(0xFF27FF88) : const Color(0xFFFF4057);
+
+      final wickPaint = Paint()
+        ..color = color
+        ..strokeWidth = 1.2;
+
+      final bodyPaint = Paint()
+        ..color = color
+        ..style = PaintingStyle.fill;
+
+      final highY = yFor(candle.high);
+      final lowY = yFor(candle.low);
+      final openY = yFor(candle.open);
+      final closeY = yFor(candle.close);
+
+      canvas.drawLine(
+        Offset(x, highY),
+        Offset(x, lowY),
+        wickPaint,
+      );
+
+      final top = math.min(openY, closeY);
+      final bottom = math.max(openY, closeY);
+
+      final bodyHeight = math.max(2.0, bottom - top);
+
+      canvas.drawRect(
+        Rect.fromLTWH(
+          x - bodyWidth / 2,
+          top,
+          bodyWidth,
+          bodyHeight,
+        ),
+        bodyPaint,
+      );
+    }
+
+    if (currentPrice.isFinite && currentPrice > 0) {
+      final currentY = yFor(currentPrice);
+
+      final currentLine = Paint()
+        ..color = const Color(0xFF00E5FF).withValues(alpha: .50)
+        ..strokeWidth = 1;
+
+      canvas.drawLine(
+        Offset(leftPad, currentY),
+        Offset(leftPad + chartWidth, currentY),
+        currentLine,
+      );
+
+      final priceLabel = TextPainter(
+        text: TextSpan(
+          text: currentPrice.toStringAsFixed(5),
+          style: const TextStyle(
+            color: Color(0xFF27FF88),
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      priceLabel.paint(
+        canvas,
+        Offset(
+          leftPad + chartWidth + 6,
+          currentY - priceLabel.height / 2,
+        ),
+      );
+    }
+
+    for (int i = 0; i <= 6; i++) {
+      final value = high - (high - low) * i / 6;
+
+      final y = topPad + chartHeight * i / 6;
+
+      final label = TextPainter(
+        text: TextSpan(
+          text: value.toStringAsFixed(5),
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .42),
+            fontSize: 8,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      label.paint(
+        canvas,
+        Offset(
+          leftPad + chartWidth + 6,
+          y - label.height / 2,
+        ),
+      );
+    }
+
+    for (int i = 0; i < count; i++) {
+      if (count > 12 && i % 3 != 0 && i != count - 1) {
+        continue;
+      }
+
+      final candle = candles[i];
+
+      final x = startX + slotWidth * i + slotWidth / 2;
+
+      final hour = candle.bucket.hour.toString().padLeft(2, '0');
+
+      final minute = candle.bucket.minute.toString().padLeft(2, '0');
+
+      final timeLabel = TextPainter(
+        text: TextSpan(
+          text: '$hour:$minute',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .35),
+            fontSize: 7,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      timeLabel.paint(
+        canvas,
+        Offset(
+          x - timeLabel.width / 2,
+          topPad + chartHeight + 6,
+        ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant _CandlestickPainter oldDelegate,
+  ) {
+    return true;
+  }
+}

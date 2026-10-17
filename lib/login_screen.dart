@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:passkeys/authenticator.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -10,6 +11,11 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
+
+  static const String savedEmailKey = '999_signal_saved_email';
+  static const String savedPasswordKey = '999_signal_saved_password';
+
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
 
@@ -23,14 +29,31 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      final email = emailController.text.trim();
+      final password = passwordController.text;
+
       await Supabase.instance.client.auth.signInWithPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text,
+        email: email,
+        password: password,
+      );
+
+      await secureStorage.write(
+        key: savedEmailKey,
+        value: email,
+      );
+
+      await secureStorage.write(
+        key: savedPasswordKey,
+        value: password,
       );
     } on AuthException catch (e) {
-      setState(() => errorMessage = e.message);
-    } catch (_) {
-      setState(() => errorMessage = 'Login failed. Please try again.');
+      if (mounted) {
+        setState(() => errorMessage = e.message);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => errorMessage = 'Login failed: $e');
+      }
     } finally {
       if (mounted) {
         setState(() => loading = false);
@@ -45,19 +68,65 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final authenticator = PasskeyAuthenticator();
+      final auth = LocalAuthentication();
 
-      await Supabase.instance.client.auth.signInWithPasskey(
-        authenticator,
+      final canCheckBiometrics = await auth.canCheckBiometrics;
+      final isDeviceSupported = await auth.isDeviceSupported();
+
+      if (canCheckBiometrics == false || isDeviceSupported == false) {
+        if (mounted) {
+          setState(() {
+            errorMessage = 'Face ID is not available on this device.';
+          });
+        }
+        return;
+      }
+
+      final authenticated = await auth.authenticate(
+        localizedReason: 'Authenticate to access 999 Signal Intelligence Pro',
+        biometricOnly: true,
+        persistAcrossBackgrounding: true,
+      );
+
+      if (authenticated == false) {
+        if (mounted) {
+          setState(() {
+            errorMessage = 'Face ID verification was cancelled.';
+          });
+        }
+        return;
+      }
+
+      final savedEmail = await secureStorage.read(key: savedEmailKey);
+      final savedPassword = await secureStorage.read(key: savedPasswordKey);
+
+      if (savedEmail == null ||
+          savedEmail.isEmpty ||
+          savedPassword == null ||
+          savedPassword.isEmpty) {
+        if (mounted) {
+          setState(() {
+            errorMessage =
+                'Face ID verified. Log in with email and password once to enable Face ID login.';
+          });
+        }
+        return;
+      }
+
+      await Supabase.instance.client.auth.signInWithPassword(
+        email: savedEmail,
+        password: savedPassword,
       );
     } on AuthException catch (e) {
       if (mounted) {
-        setState(() => errorMessage = e.message);
+        setState(() {
+          errorMessage = 'Face ID login failed: ${e.message}';
+        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          errorMessage = 'Face ID / passkey login failed: $e';
+          errorMessage = 'Face ID failed: $e';
         });
       }
     } finally {

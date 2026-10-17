@@ -1,0 +1,13 @@
+import 'package:flutter/material.dart';
+
+const bool is999KLineProWeb = false;
+
+Widget build999KLineProHost({
+  required String elementId,
+  required String barsJson,
+  required String symbol,
+  required String timeframe,
+  required Widget fallback,
+}) {
+  return fallback;
+}

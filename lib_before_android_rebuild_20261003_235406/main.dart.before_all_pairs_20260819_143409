@@ -1,0 +1,2432 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'login_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'login_screen.dart';
+import 'login_screen.dart';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import 'models/scan_signal.dart';
+import 'services/scanner_controller.dart';
+import 'services/market_data_service.dart';
+import 'ai/agent_duke_command_center.dart';
+import 'modules/specialized/module_router.dart';
+
+import 'dashboard/pro_live_dashboard.dart';
+
+const bool kUseProLiveDashboard = true;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(
+    url: 'https://qspasdiorjxoymvenqsj.supabase.co',
+    anonKey: 'sb_publishable_-SrzGiZFJSvCCQhTa9O31Q_QFbwbawj',
+  );
+  runApp(const NexusApp());
+}
+
+class NexusApp extends StatelessWidget {
+  const NexusApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: '999 Signal Intelligence 2.0',
+      theme: ThemeData.dark(),
+      home: StreamBuilder<AuthState>(
+        stream: Supabase.instance.client.auth.onAuthStateChange,
+        builder: (context, snapshot) {
+          final session = Supabase.instance.client.auth.currentSession;
+          if (session == null) {
+            return const LoginScreen();
+          }
+          return kUseProLiveDashboard
+              ? const ProLiveDashboard()
+              : const NexusDashboard();
+        },
+      ),
+    );
+  }
+}
+
+class NexusDashboard extends StatefulWidget {
+  const NexusDashboard({super.key});
+
+  @override
+  State<NexusDashboard> createState() => _NexusDashboardState();
+}
+
+class _NexusDashboardState extends State<NexusDashboard> {
+  late final ScannerController scannerController;
+  StreamSubscription<List<ScanSignal>>? signalSubscription;
+  StreamSubscription? quoteSubscription;
+
+  List<ScanSignal> liveSignals = [];
+  final Map<String, double> latestPrices = {};
+  bool scannerConnected = false;
+  MarketMode marketMode = MarketMode.demo;
+
+  String selectedModule = 'AI Opportunity Scan';
+  String selectedPair = 'EURUSD';
+  String selectedTimeframe = 'M1';
+  bool strictMode = true;
+  bool autoUpdate = true;
+  bool watchlisted = false;
+
+  double minProbability = 55;
+  double minRiskReward = 1.0;
+
+  List<ScanSignal> get filteredSignals {
+    final threshold = strictMode
+        ? (minProbability < 75 ? 75.0 : minProbability)
+        : minProbability;
+
+    return liveSignals
+        .where((signal) => signal.confidence >= threshold)
+        .toList()
+      ..sort(
+        (a, b) => b.confidence.compareTo(a.confidence),
+      );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    scannerController = ScannerController();
+
+    signalSubscription = scannerController.signalStream.listen((signals) {
+      if (!mounted) return;
+
+      if (!autoUpdate) return;
+
+      setState(() {
+        liveSignals = signals;
+        scannerConnected = true;
+      });
+    });
+
+    quoteSubscription = scannerController.quoteStream.listen((quotes) {
+      if (!mounted) return;
+
+      setState(() {
+        for (final quote in quotes) {
+          latestPrices[quote.symbol.replaceAll('/', '')] = quote.price;
+        }
+      });
+    });
+
+    scannerController.start();
+  }
+
+  @override
+  void dispose() {
+    signalSubscription?.cancel();
+    quoteSubscription?.cancel();
+    scannerController.dispose();
+    super.dispose();
+  }
+
+  void switchToLive() {
+    scannerController.marketDataService.setTimeframe(selectedTimeframe);
+    scannerController.setLiveMode();
+
+    setState(() {
+      marketMode = MarketMode.live;
+      scannerConnected = false;
+    });
+
+    message('LIVE mode • Twelve Data • $selectedTimeframe');
+  }
+
+  void switchToDemo() {
+    scannerController.setDemoMode();
+
+    setState(() {
+      marketMode = MarketMode.demo;
+      scannerConnected = false;
+    });
+
+    message('DEMO mode • Simulator • $selectedTimeframe');
+  }
+
+  void message(String text) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          duration: const Duration(milliseconds: 900),
+        ),
+      );
+  }
+
+  Future<void> openTimeframeSelector() async {
+    const timeframes = [
+      'M1',
+      'M5',
+      'M15',
+      'M30',
+      'M45',
+      'H1',
+      'H2',
+      'H4',
+      'H8',
+      'D1',
+      'W1',
+      'MN1',
+    ];
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        backgroundColor: const Color(0xFF081525),
+        title: Text(
+          'Analysis Timeframe • Current: $selectedTimeframe',
+        ),
+        children: [
+          for (final timeframe in timeframes)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, timeframe),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 55,
+                    child: Text(
+                      timeframe,
+                      style: TextStyle(
+                        color: timeframe == selectedTimeframe
+                            ? Colors.cyanAccent
+                            : Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  if (timeframe == 'M1')
+                    const Text(
+                      'PRIMARY',
+                      style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (choice != null) {
+      setState(() {
+        selectedTimeframe = choice;
+      });
+
+      scannerController.marketDataService.setTimeframe(choice);
+
+      message('Scanner timeframe changed to $choice');
+    }
+  }
+
+  void openPanel(String title) {
+    setState(() => selectedModule = title);
+
+    // 1-minute Deep Scanner uses the live signal-details panel.
+    if (title == 'Pair Deep Scanner') {
+      showSignalDetails(selectedPair);
+      return;
+    }
+
+    final signal = signalFor(selectedPair);
+
+    openSpecializedModule(
+      context,
+      title,
+      pair: selectedPair,
+      timeframe: selectedTimeframe,
+      price: currentPriceFor(selectedPair),
+      direction: signal?.directionText ?? 'WAIT',
+      confidence: signal?.confidence ?? 0.0,
+      score: signal?.score ?? 0.0,
+      trend: signal?.trend ?? 'Waiting for signal',
+      momentum: signal?.momentum ?? 'Waiting for signal',
+      setup: signal?.setup ?? 'Waiting for signal',
+      entry: signal?.entry,
+      stopLoss: signal?.stopLoss,
+      tp1: signal?.takeProfit1,
+      tp2: signal?.takeProfit2,
+      tp3: signal?.takeProfit3,
+    );
+  }
+
+  Widget hit({
+    required double left,
+    required double top,
+    required double width,
+    required double height,
+    required VoidCallback onTap,
+  }) {
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          splashColor: Colors.cyanAccent.withValues(alpha: .18),
+          hoverColor: Colors.cyanAccent.withValues(alpha: .06),
+        ),
+      ),
+    );
+  }
+
+  double? currentPriceFor(String symbol) {
+    final normalized = symbol.replaceAll('/', '');
+    return latestPrices[normalized];
+  }
+
+  String currentPriceText() {
+    final price = currentPriceFor(selectedPair);
+
+    if (price == null) {
+      return 'REST';
+    }
+
+    final decimals = selectedPair.contains('JPY') ? 3 : 5;
+    return price.toStringAsFixed(decimals);
+  }
+
+  ScanSignal? signalFor(String symbol) {
+    final normalized = symbol.replaceAll('/', '');
+
+    for (final signal in liveSignals) {
+      if (signal.symbol.replaceAll('/', '') == normalized) {
+        return signal;
+      }
+    }
+
+    return null;
+  }
+
+  void showSignalDetails(String symbol) {
+    final signal = signalFor(symbol);
+
+    if (signal == null) {
+      message('$symbol signal is still loading');
+      return;
+    }
+
+    final decimals = symbol.contains('JPY') ? 3 : 5;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF07131F),
+        title: Text(
+          '$symbol  •  ${signal.directionText}',
+          style: TextStyle(
+            color: signal.direction == TradeDirection.buy
+                ? Colors.greenAccent
+                : signal.direction == TradeDirection.sell
+                    ? Colors.redAccent
+                    : Colors.orangeAccent,
+          ),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Setup Score: ${signal.confidence.toStringAsFixed(0)}%',
+              ),
+              const SizedBox(height: 8),
+              Text('Trend: ${signal.trend}'),
+              Text('Momentum: ${signal.momentum}'),
+              Text('Setup: ${signal.setup}'),
+              const Divider(),
+              Text(
+                'Entry: ${signal.entry.toStringAsFixed(decimals)}',
+              ),
+              Text(
+                'Buy Entry Time: ${signal.direction == TradeDirection.buy ? signal.entryTimingText : 'WAIT'}',
+              ),
+              Text(
+                'Sell Entry Time: ${signal.direction == TradeDirection.sell ? signal.entryTimingText : 'WAIT'}',
+              ),
+              Text(
+                'Current Action: ${signal.directionText}',
+              ),
+              Text(
+                'Confidence: ${signal.confidence.toStringAsFixed(1)}%',
+              ),
+              const SizedBox(height: 10),
+              Text(
+                scannerConnected
+                    ? 'Scanner engine: CONNECTED'
+                    : 'Scanner engine: CONNECTING...',
+                style: TextStyle(
+                  color: scannerConnected
+                      ? Colors.greenAccent
+                      : Colors.orangeAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileDashboard(BuildContext context) {
+    final signal = signalFor(selectedPair);
+
+    final direction = signal?.directionText ?? 'WAIT';
+    final confidence = signal?.confidence ?? 0.0;
+    final trend = signal?.trend ?? 'Waiting for signal';
+    final momentum = signal?.momentum ?? 'Waiting for signal';
+    final setup = signal?.setup ?? 'Waiting for signal';
+
+    final price = currentPriceFor(selectedPair);
+
+    String formatPrice(double? value, String symbol) {
+      if (value == null) return '--';
+      final decimals = symbol.contains('JPY') ? 3 : 5;
+      return value.toStringAsFixed(decimals);
+    }
+
+    final signalColor = direction == 'CALL'
+        ? Colors.greenAccent
+        : direction == 'PUT'
+            ? Colors.redAccent
+            : Colors.orangeAccent;
+
+    const moduleNames = <String>[
+      'AI Opportunity Scan',
+      'Multi-Timeframe Alignment',
+      'Order Flow & Liquidity',
+      'Sentiment Engine',
+      'Macro & Fundamental',
+      'Volatility & Risk',
+      'Trade Automation',
+      'Market Heatmap',
+      'Global Sessions',
+      'News & Macro Impact',
+      'Pair Deep Scanner',
+      'Trade Plan AI',
+      'Smart Money Tracker',
+      'AI Prediction Engine',
+      'Market Regime Detection',
+      'Risk & Position Sizing',
+      'Alerts & Automation',
+    ];
+
+    const scanPairs = <String>[
+      'XAUUSD',
+      'EURUSD',
+      'GBPJPY',
+      'AUDUSD',
+      'USDCHF',
+      'USDCAD',
+      'NZDUSD',
+      'EURGBP',
+    ];
+
+    Widget mobileCard({
+      required Widget child,
+      EdgeInsetsGeometry padding = const EdgeInsets.all(14),
+    }) {
+      return Container(
+        width: double.infinity,
+        padding: padding,
+        decoration: BoxDecoration(
+          color: const Color(0xFF0B1927),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: const Color(0xFF1D4258),
+          ),
+        ),
+        child: child,
+      );
+    }
+
+    Widget stat(String label, String value, {Color? color}) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF78909C),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: color ?? Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF030A11),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // MOBILE HEADER
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              decoration: const BoxDecoration(
+                color: Color(0xFF07131F),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Color(0xFF16384B),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '999 SIGNAL INTELLIGENCE 2.0',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'AI • QUANT • ORDER FLOW • SMART MONEY',
+                          style: TextStyle(
+                            color: Color(0xFF58D8FF),
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0A2B1D),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.greenAccent,
+                      ),
+                    ),
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // SELECTED PAIR
+                    mobileCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'SELECTED PAIR',
+                            style: TextStyle(
+                              color: Color(0xFF7DDFFF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  selectedPair,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 25,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    formatPrice(price, selectedPair),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    selectedTimeframe,
+                                    style: const TextStyle(
+                                      color: Color(0xFF7DDFFF),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: signalColor.withValues(alpha: .08),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: signalColor.withValues(alpha: .45),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: stat(
+                                    'DUKE DECISION',
+                                    direction,
+                                    color: signalColor,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: stat(
+                                    'CONFIDENCE',
+                                    '${confidence.toStringAsFixed(1)}%',
+                                    color: confidence >= 85
+                                        ? Colors.greenAccent
+                                        : Colors.orangeAccent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(child: stat('TREND', trend)),
+                              const SizedBox(width: 8),
+                              Expanded(child: stat('MOMENTUM', momentum)),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          stat('SETUP', setup),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // LIVE SCANNER
+                    const Text(
+                      'LIVE OPPORTUNITY SCANNER',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    mobileCard(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Column(
+                        children: [
+                          for (final pair in scanPairs)
+                            Builder(
+                              builder: (context) {
+                                final rowSignal = signalFor(pair);
+                                final rowPrice = currentPriceFor(pair);
+                                final rowDirection =
+                                    rowSignal?.directionText ?? 'WAIT';
+                                final rowConfidence =
+                                    rowSignal?.confidence ?? 0.0;
+
+                                final rowColor = rowDirection == 'CALL'
+                                    ? Colors.greenAccent
+                                    : rowDirection == 'PUT'
+                                        ? Colors.redAccent
+                                        : Colors.orangeAccent;
+
+                                return InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      selectedPair = pair;
+                                    });
+                                    showSignalDetails(pair);
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 11,
+                                    ),
+                                    decoration: const BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Color(0xFF173247),
+                                        ),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 70,
+                                          child: Text(
+                                            pair,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            formatPrice(rowPrice, pair),
+                                            style: const TextStyle(
+                                              color: Color(0xFFB0BEC5),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          width: 55,
+                                          alignment: Alignment.center,
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 5,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                rowColor.withValues(alpha: .10),
+                                            borderRadius:
+                                                BorderRadius.circular(7),
+                                            border: Border.all(
+                                              color: rowColor.withValues(
+                                                  alpha: .5),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            rowDirection,
+                                            style: TextStyle(
+                                              color: rowColor,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        SizedBox(
+                                          width: 48,
+                                          child: Text(
+                                            '${rowConfidence.toStringAsFixed(1)}%',
+                                            textAlign: TextAlign.right,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // AGENT DUKE
+                    mobileCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 17,
+                                backgroundColor: Color(0xFF173247),
+                                child: Text(
+                                  'D',
+                                  style: TextStyle(
+                                    color: Colors.orangeAccent,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'AGENT DUKE DA BOSS X',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    Text(
+                                      'AI COMMAND CENTER • ONLINE',
+                                      style: TextStyle(
+                                        color: Colors.greenAccent,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          Builder(
+                            builder: (context) {
+                              final entryStatus =
+                                  confidence <= 0 || direction == 'WAIT'
+                                      ? 'WAIT'
+                                      : confidence >= 75
+                                          ? 'ENTER NOW'
+                                          : confidence >= 65
+                                              ? 'GET READY'
+                                              : 'WAIT';
+
+                              final entryColor = entryStatus == 'ENTER NOW'
+                                  ? Colors.greenAccent
+                                  : entryStatus == 'GET READY'
+                                      ? Colors.orangeAccent
+                                      : Colors.grey;
+
+                              return Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: entryColor.withValues(alpha: .70),
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: entryColor.withValues(alpha: .08),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            '1-MINUTE ENTRY',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 5),
+                                          Text(
+                                            entryStatus,
+                                            style: TextStyle(
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.w900,
+                                              color: entryColor,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          direction,
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w900,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        const Text(
+                                          '60 SEC',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.cyanAccent,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          const SizedBox(height: 14),
+                          Text(
+                            confidence <= 0
+                                ? 'Duke is waiting for a qualified live scanner signal.'
+                                : '$selectedPair is currently showing a $direction bias with ${confidence.toStringAsFixed(1)}% scanner confidence. Trend: $trend. Momentum: $momentum.',
+                            style: const TextStyle(
+                              color: Color(0xFFC7D6DF),
+                              fontSize: 12,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () =>
+                                      openPanel('Pair Deep Scanner'),
+                                  child: const Text('DEEP SCAN'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () => openPanel('Trade Plan AI'),
+                                  child: const Text('TRADE PLAN'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // TRADE PLAN SNAPSHOT
+                    mobileCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'TRADE PLAN SNAPSHOT',
+                            style: TextStyle(
+                              color: Color(0xFF7DDFFF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          stat(
+                            'ENTRY',
+                            formatPrice(signal?.entry, selectedPair),
+                          ),
+                          const SizedBox(height: 8),
+                          stat(
+                            'BUY ENTRY TIME',
+                            signal == null
+                                ? '--'
+                                : signal.direction == TradeDirection.buy
+                                    ? signal.entryTimingText
+                                    : 'WAIT',
+                            color: Colors.greenAccent,
+                          ),
+                          const SizedBox(height: 8),
+                          stat(
+                            'SELL ENTRY TIME',
+                            signal == null
+                                ? '--'
+                                : signal.direction == TradeDirection.sell
+                                    ? signal.entryTimingText
+                                    : 'WAIT',
+                            color: Colors.redAccent,
+                          ),
+                          const SizedBox(height: 8),
+                          stat(
+                            'CURRENT ACTION',
+                            signal?.directionText ?? 'WAIT',
+                          ),
+                          const SizedBox(height: 8),
+                          stat(
+                            'CONFIDENCE',
+                            signal == null
+                                ? '--'
+                                : '${signal.confidence.toStringAsFixed(1)}%',
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // ALL MODULES
+                    const Text(
+                      'INTELLIGENCE MODULES',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: moduleNames.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 2.25,
+                      ),
+                      itemBuilder: (context, index) {
+                        final title = moduleNames[index];
+
+                        return InkWell(
+                          onTap: () => openPanel(title),
+                          borderRadius: BorderRadius.circular(11),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0B1927),
+                              borderRadius: BorderRadius.circular(11),
+                              border: Border.all(
+                                color: const Color(0xFF1D4258),
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                title,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // MOBILE QUICK ACTION BAR
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 7,
+              ),
+              decoration: const BoxDecoration(
+                color: Color(0xFF07131F),
+                border: Border(
+                  top: BorderSide(
+                    color: Color(0xFF173247),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => openPanel('AI Opportunity Scan'),
+                      child: const Text(
+                        'SCAN',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => openPanel('Market Heatmap'),
+                      child: const Text(
+                        'RADAR',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => openPanel('AI Prediction Engine'),
+                      child: const Text(
+                        'AI',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => openPanel('Risk & Position Sizing'),
+                      child: const Text(
+                        'RISK',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => openPanel('Alerts & Automation'),
+                      child: const Text(
+                        'ALERTS',
+                        style: TextStyle(fontSize: 10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPocketPairExplorer(BuildContext context) async {
+    String filter = 'TOP 40';
+    String search = '';
+
+    String categoryFor(String symbol) {
+      final s = symbol.toUpperCase();
+
+      if (s.endsWith('_OTC')) {
+        return 'OTC';
+      }
+
+      const cryptoTokens = <String>[
+        'BTC',
+        'ETH',
+        'LTC',
+        'XRP',
+        'DOGE',
+        'SOL',
+        'ADA',
+        'BNB',
+        'TRX',
+        'TON',
+      ];
+
+      if (cryptoTokens.any((token) => s.contains(token))) {
+        return 'CRYPTO';
+      }
+
+      const fiat = <String>{
+        'USD',
+        'EUR',
+        'GBP',
+        'JPY',
+        'CHF',
+        'CAD',
+        'AUD',
+        'NZD',
+      };
+
+      if (s.length == 6) {
+        final left = s.substring(0, 3);
+        final right = s.substring(3, 6);
+
+        if (fiat.contains(left) && fiat.contains(right)) {
+          return 'FOREX';
+        }
+      }
+
+      return 'OTHER';
+    }
+
+    double rankFor(String symbol) {
+      final signal = _signalFor(symbol);
+
+      if (signal == null) {
+        return -100000.0;
+      }
+
+      final d = signal.directionText.toUpperCase();
+
+      final actionable = d == 'CALL' || d == 'PUT' || d == 'CALL' || d == 'PUT';
+
+      return (actionable ? 1000.0 : 0.0) + signal.confidence.toDouble();
+    }
+
+    List<String> getPairs() {
+      var pairs = latestPrices.keys.toList();
+
+      if (filter == 'OTC') {
+        pairs = pairs.where((s) => categoryFor(s) == 'OTC').toList();
+      } else if (filter == 'FOREX') {
+        pairs = pairs.where((s) => categoryFor(s) == 'FOREX').toList();
+      } else if (filter == 'CRYPTO') {
+        pairs = pairs.where((s) => categoryFor(s) == 'CRYPTO').toList();
+      }
+
+      final q = search.trim().toUpperCase();
+
+      if (q.isNotEmpty) {
+        pairs = pairs.where((s) => s.toUpperCase().contains(q)).toList();
+      }
+
+      pairs.sort(
+        (a, b) => rankFor(b).compareTo(rankFor(a)),
+      );
+
+      if (filter == 'TOP 40' && pairs.length > 40) {
+        pairs = pairs.take(40).toList();
+      }
+
+      return pairs;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final pairs = getPairs();
+
+            return Dialog(
+              backgroundColor: const Color(0xFF07111F),
+              child: SizedBox(
+                width: 900,
+                height: 680,
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'POCKET OPTION LIVE PAIRS',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              Navigator.of(dialogContext).pop();
+                            },
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '${latestPrices.length} Pocket Option symbols loaded',
+                        style: const TextStyle(
+                          color: Colors.cyanAccent,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final item in const [
+                            'TOP 40',
+                            'ALL',
+                            'OTC',
+                            'FOREX',
+                            'CRYPTO',
+                          ])
+                            ChoiceChip(
+                              label: Text(item),
+                              selected: filter == item,
+                              onSelected: (_) {
+                                setDialogState(() {
+                                  filter = item;
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        onChanged: (value) {
+                          setDialogState(() {
+                            search = value;
+                          });
+                        },
+                        style: const TextStyle(
+                          color: Colors.white,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: 'Search pair, for example AUDUSD_OTC',
+                          hintStyle: TextStyle(
+                            color: Colors.white54,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: Colors.cyanAccent,
+                          ),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${pairs.length} pairs - strongest CALL/PUT first',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: pairs.length,
+                          itemBuilder: (context, index) {
+                            final symbol = pairs[index];
+                            final price = latestPrices[symbol];
+                            final signal = _signalFor(symbol);
+
+                            final rawDirection =
+                                signal?.directionText.toUpperCase() ?? 'WAIT';
+
+                            final direction = rawDirection == 'CALL'
+                                ? 'CALL'
+                                : rawDirection == 'PUT'
+                                    ? 'PUT'
+                                    : rawDirection;
+
+                            final confidence =
+                                signal?.confidence.toDouble() ?? 0.0;
+
+                            final setup = signal?.setup ?? '1M WARMING';
+
+                            Color statusColor = Colors.amberAccent;
+
+                            if (direction == 'CALL') {
+                              statusColor = Colors.greenAccent;
+                            } else if (direction == 'PUT') {
+                              statusColor = Colors.redAccent;
+                            }
+
+                            return Card(
+                              color: const Color(0xFF101D2C),
+                              child: ListTile(
+                                onTap: () {
+                                  setState(() {
+                                    selectedPair = symbol;
+                                  });
+
+                                  Navigator.of(dialogContext).pop();
+
+                                  message(
+                                    '$symbol selected from Pocket Option',
+                                  );
+                                },
+                                leading: SizedBox(
+                                  width: 38,
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                title: Text(
+                                  symbol.replaceAll('_', ' '),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '$direction  |  ${confidence.toStringAsFixed(1)}%  |  $setup',
+                                  style: TextStyle(
+                                    color: statusColor,
+                                  ),
+                                ),
+                                trailing: Text(
+                                  price == null ? '--' : price.toString(),
+                                  style: const TextStyle(
+                                    color: Colors.cyanAccent,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  ScanSignal? _signalFor(String symbol) {
+    final normalized = symbol.replaceAll('/', '').toUpperCase();
+
+    for (final signal in liveSignals) {
+      final candidate = signal.symbol.replaceAll('/', '').toUpperCase();
+
+      if (candidate == normalized) {
+        return signal;
+      }
+    }
+
+    return null;
+  }
+
+  List<ScanSignal> get liveRankedSignals {
+    final results = List<ScanSignal>.from(liveSignals);
+
+    results.sort((a, b) {
+      final aDirection = a.directionText.toUpperCase();
+      final bDirection = b.directionText.toUpperCase();
+
+      final aActionable = aDirection == 'BUY' ||
+          aDirection == 'SELL' ||
+          aDirection == 'CALL' ||
+          aDirection == 'PUT';
+
+      final bActionable = bDirection == 'BUY' ||
+          bDirection == 'SELL' ||
+          bDirection == 'CALL' ||
+          bDirection == 'PUT';
+
+      if (aActionable != bActionable) {
+        return aActionable ? -1 : 1;
+      }
+
+      return b.confidence.compareTo(a.confidence);
+    });
+
+    return results;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < 700) {
+      return _buildMobileDashboard(context);
+    }
+
+    const designWidth = 1536.0;
+    const designHeight = 1024.0;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF020811),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final scaleX = constraints.maxWidth / designWidth;
+          final scaleY = constraints.maxHeight / designHeight;
+          final scale = scaleX < scaleY ? scaleX : scaleY;
+
+          return Center(
+            child: SizedBox(
+              width: designWidth * scale,
+              height: designHeight * scale,
+              child: FittedBox(
+                fit: BoxFit.fill,
+                child: SizedBox(
+                  width: designWidth,
+                  height: designHeight,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: Image.asset(
+                          'assets/images/nexus_fx_scanner_reference.png',
+                          fit: BoxFit.fill,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+
+                      // 999 SIGNAL INTELLIGENCE 2.0 BRANDING
+                      Positioned(
+                        left: 18,
+                        top: 10,
+                        width: 325,
+                        height: 42,
+                        child: Container(
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF07131F),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            '999 SIGNAL INTELLIGENCE 2.0',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .7,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      Positioned(
+                        left: 560,
+                        bottom: 6,
+                        width: 420,
+                        height: 28,
+                        child: Container(
+                          alignment: Alignment.center,
+                          color: const Color(0xFF07131F),
+                          child: const Text(
+                            '999 SIGNAL INTELLIGENCE 2.0',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: .8,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // 999 SIGNAL INTELLIGENCE 2.0 BRANDING
+                      Positioned(
+                        left: 18,
+                        top: 10,
+                        width: 325,
+                        height: 42,
+                        child: Container(
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF07131F),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            '999 SIGNAL INTELLIGENCE 2.0',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .7,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      Positioned(
+                        left: 560,
+                        bottom: 6,
+                        width: 420,
+                        height: 28,
+                        child: Container(
+                          alignment: Alignment.center,
+                          color: const Color(0xFF07131F),
+                          child: const Text(
+                            '999 SIGNAL INTELLIGENCE 2.0',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: .8,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // TOP AI MODULES
+                      hit(
+                        left: 65,
+                        top: 52,
+                        width: 185,
+                        height: 50,
+                        onTap: () => openPanel('AI Opportunity Scan'),
+                      ),
+                      hit(
+                        left: 262,
+                        top: 52,
+                        width: 196,
+                        height: 50,
+                        onTap: () => openPanel('Multi-Timeframe Alignment'),
+                      ),
+                      hit(
+                        left: 470,
+                        top: 52,
+                        width: 195,
+                        height: 50,
+                        onTap: () => openPanel('Order Flow & Liquidity'),
+                      ),
+                      hit(
+                        left: 680,
+                        top: 52,
+                        width: 184,
+                        height: 50,
+                        onTap: () => openPanel('Sentiment Engine'),
+                      ),
+                      hit(
+                        left: 877,
+                        top: 52,
+                        width: 190,
+                        height: 50,
+                        onTap: () => openPanel('Macro & Fundamental'),
+                      ),
+                      hit(
+                        left: 1078,
+                        top: 52,
+                        width: 190,
+                        height: 50,
+                        onTap: () => openPanel('Volatility & Risk'),
+                      ),
+                      hit(
+                        left: 1280,
+                        top: 52,
+                        width: 185,
+                        height: 50,
+                        onTap: () => openPanel('Trade Automation'),
+                      ),
+
+                      // MARKET HEATMAP TIMEFRAME SELECTOR
+                      Positioned(
+                        left: 145,
+                        top: 166,
+                        width: 164,
+                        height: 27,
+                        child: Container(
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF081727).withValues(alpha: .94),
+                            border: Border.all(
+                              color: Colors.cyanAccent.withValues(alpha: .55),
+                            ),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            'TIMEFRAME  $selectedTimeframe  ▼',
+                            style: const TextStyle(
+                              color: Colors.cyanAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      hit(
+                        left: 145,
+                        top: 166,
+                        width: 164,
+                        height: 27,
+                        onTap: openTimeframeSelector,
+                      ),
+
+                      // SCANNER ASSET TABS
+                      hit(
+                        left: 301,
+                        top: 214,
+                        width: 69,
+                        height: 30,
+                        onTap: () => message('All Pairs selected'),
+                      ),
+                      hit(
+                        left: 374,
+                        top: 214,
+                        width: 65,
+                        height: 30,
+                        onTap: () => message('Majors selected'),
+                      ),
+                      hit(
+                        left: 442,
+                        top: 214,
+                        width: 60,
+                        height: 30,
+                        onTap: () => message('Minors selected'),
+                      ),
+                      hit(
+                        left: 505,
+                        top: 214,
+                        width: 63,
+                        height: 30,
+                        onTap: () => message('Exotics selected'),
+                      ),
+                      hit(
+                        left: 571,
+                        top: 214,
+                        width: 80,
+                        height: 30,
+                        onTap: () => message('XAU/XAG selected'),
+                      ),
+                      hit(
+                        left: 654,
+                        top: 214,
+                        width: 65,
+                        height: 30,
+                        onTap: () => message('Custom selected'),
+                      ),
+
+                      // ===== LIVE POCKET OPTION PAIR SELECTOR =====
+                      Positioned(
+                        left: 635,
+                        top: 207,
+                        width: 155,
+                        height: 38,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: ElevatedButton(
+                            onPressed: () => _openPocketPairExplorer(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF063E52),
+                              foregroundColor: Colors.cyanAccent,
+                              elevation: 8,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                side: const BorderSide(
+                                  color: Colors.cyanAccent,
+                                  width: 1.5,
+                                ),
+                              ),
+                            ),
+                            child: const Text(
+                              'LIVE PAIRS ▼',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // ===== LIVE RANKED SCANNER TABLE =====
+                      Positioned(
+                        left: 208,
+                        top: 252,
+                        width: 565,
+                        height: 330,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xEE07111F),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Colors.cyanAccent.withOpacity(0.35),
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                child: const Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 30,
+                                      child: Text(
+                                        '#',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      flex: 2,
+                                      child: Text(
+                                        'PAIR',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        'CALL/PUT',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        'SCORE',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      flex: 2,
+                                      child: Text(
+                                        'SETUP',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        'PRICE',
+                                        style: TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Divider(
+                                height: 1,
+                                color: Colors.white12,
+                              ),
+                              Expanded(
+                                child: Builder(
+                                  builder: (context) {
+                                    final rows =
+                                        liveRankedSignals.take(12).toList();
+
+                                    if (rows.isEmpty) {
+                                      return const Center(
+                                        child: Text(
+                                          'Waiting for live Pocket Option scanner data...',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                          ),
+                                        ),
+                                      );
+                                    }
+
+                                    return ListView.builder(
+                                      padding: EdgeInsets.zero,
+                                      itemCount: rows.length,
+                                      itemBuilder: (context, index) {
+                                        final signal = rows[index];
+
+                                        final rawDirection =
+                                            signal.directionText.toUpperCase();
+
+                                        final direction = rawDirection == 'BUY'
+                                            ? 'CALL'
+                                            : rawDirection == 'SELL'
+                                                ? 'PUT'
+                                                : rawDirection;
+
+                                        final price =
+                                            latestPrices[signal.symbol] ??
+                                                latestPrices[signal.symbol
+                                                    .replaceAll('/', '')];
+
+                                        Color directionColor =
+                                            Colors.amberAccent;
+
+                                        if (direction == 'CALL') {
+                                          directionColor = Colors.greenAccent;
+                                        } else if (direction == 'PUT') {
+                                          directionColor = Colors.redAccent;
+                                        }
+
+                                        return InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              selectedPair = signal.symbol
+                                                  .replaceAll('/', '');
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 7,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                bottom: BorderSide(
+                                                  color: Colors.white
+                                                      .withOpacity(0.06),
+                                                ),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 30,
+                                                  child: Text(
+                                                    '${index + 1}',
+                                                    style: const TextStyle(
+                                                      color: Colors.white54,
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  flex: 2,
+                                                  child: Text(
+                                                    signal.symbol
+                                                        .replaceAll('_', ' '),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Text(
+                                                    direction,
+                                                    style: TextStyle(
+                                                      color: directionColor,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Text(
+                                                    '${signal.confidence.toStringAsFixed(1)}%',
+                                                    style: const TextStyle(
+                                                      color: Colors.cyanAccent,
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  flex: 2,
+                                                  child: Text(
+                                                    signal.setup,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Colors.white70,
+                                                      fontSize: 10,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Text(
+                                                    price == null
+                                                        ? '--'
+                                                        : price.toString(),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Colors.greenAccent,
+                                                      fontSize: 10,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+// MIN PROBABILITY
+                      hit(
+                        left: 801,
+                        top: 214,
+                        width: 111,
+                        height: 30,
+                        onTap: () async {
+                          final choice = await showDialog<double>(
+                            context: context,
+                            builder: (_) => SimpleDialog(
+                              backgroundColor: const Color(0xFF081525),
+                              title: const Text(
+                                'Minimum Technical Score',
+                              ),
+                              children: [
+                                for (final value in [
+                                  50.0,
+                                  55.0,
+                                  60.0,
+                                  65.0,
+                                  70.0,
+                                  75.0,
+                                  80.0,
+                                  85.0,
+                                  90.0,
+                                  95.0,
+                                ])
+                                  SimpleDialogOption(
+                                    onPressed: () =>
+                                        Navigator.pop(context, value),
+                                    child: Text(
+                                      '${value.toStringAsFixed(0)}%',
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+
+                          if (choice != null) {
+                            setState(() {
+                              minProbability = choice;
+                            });
+
+                            message(
+                              'Minimum probability set to '
+                              '${minProbability.toStringAsFixed(0)}% '
+                              '(${filteredSignals.length} setups)',
+                            );
+                          }
+                        },
+                      ),
+
+                      // R:R FILTER
+                      hit(
+                        left: 919,
+                        top: 214,
+                        width: 92,
+                        height: 30,
+                        onTap: () async {
+                          final choice = await showDialog<double>(
+                            context: context,
+                            builder: (_) => SimpleDialog(
+                              backgroundColor: const Color(0xFF081525),
+                              title: const Text('Minimum Risk / Reward'),
+                              children: [
+                                for (final value in [
+                                  1.0,
+                                  1.25,
+                                  1.5,
+                                  1.75,
+                                  2.0,
+                                  2.5,
+                                  3.0,
+                                ])
+                                  SimpleDialogOption(
+                                    onPressed: () =>
+                                        Navigator.pop(context, value),
+                                    child: Text(
+                                      '1 : ${value.toStringAsFixed(2)}',
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+
+                          if (choice != null) {
+                            setState(() {
+                              minRiskReward = choice;
+                            });
+
+                            message(
+                              'Minimum R:R set to '
+                              '1:${minRiskReward.toStringAsFixed(2)}',
+                            );
+                          }
+                        },
+                      ),
+
+                      // STRICT MODE
+                      hit(
+                        left: 1019,
+                        top: 214,
+                        width: 93,
+                        height: 30,
+                        onTap: () {
+                          setState(() => strictMode = !strictMode);
+                          message(
+                            'AI Strict Mode ${strictMode ? "ON" : "OFF"}',
+                          );
+                        },
+                      ),
+
+                      // LIVE STRICT MODE INDICATOR
+                      Positioned(
+                        left: 1080,
+                        top: 220,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: strictMode
+                                ? const Color(0xFF00C878)
+                                : const Color(0xFF7A2632),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            strictMode ? 'ON' : 'OFF',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // AUTO UPDATE
+                      hit(
+                        left: 1122,
+                        top: 214,
+                        width: 121,
+                        height: 30,
+                        onTap: () {
+                          setState(() => autoUpdate = !autoUpdate);
+                          message(
+                            'Auto Update ${autoUpdate ? "ON" : "OFF"}',
+                          );
+                        },
+                      ),
+
+                      // LIVE AUTO UPDATE INDICATOR
+                      Positioned(
+                        left: 1204,
+                        top: 220,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: autoUpdate
+                                ? const Color(0xFF00C878)
+                                : const Color(0xFF7A2632),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            autoUpdate ? 'ON' : 'OFF',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // HIDE OLD SCANNING COMBINATIONS LABEL
+                      Positioned(
+                        left: 1060,
+                        top: 238,
+                        width: 225,
+                        height: 26,
+                        child: Container(
+                          color: const Color(0xFF07131F),
+                        ),
+                      ),
+
+                      // AGENT DUKE DA BOSS X COMMAND CENTER
+                      Positioned(
+                        right: 18,
+                        top: 125,
+                        child: AgentDukeCommandCenter(
+                          selectedPair: selectedPair,
+                          result: scannerController.dukeResults[selectedPair],
+                          onDeepScan: () {
+                            setState(() {
+                              selectedTimeframe =
+                                  selectedTimeframe == 'H1' ? 'H4' : 'H1';
+                            });
+
+                            message(
+                              'Duke Deep Scan: $selectedPair • $selectedTimeframe',
+                            );
+                          },
+                          onWatchlist: () {
+                            setState(() => watchlisted = !watchlisted);
+
+                            message(
+                              watchlisted
+                                  ? '$selectedPair added to watchlist'
+                                  : '$selectedPair removed from watchlist',
+                            );
+                          },
+                        ),
+                      ),
+
+                      // SCANNER ROWS
+                      for (int i = 0; i < 8; i++)
+                        hit(
+                          left: 297,
+                          top: 294 + (i * 47),
+                          width: 998,
+                          height: 44,
+                          onTap: () {
+                            const pairs = [
+                              'XAUUSD',
+                              'EURUSD',
+                              'GBPJPY',
+                              'AUDUSD',
+                              'USDCHF',
+                              'USDCAD',
+                              'NZDUSD',
+                              'EURGBP',
+                            ];
+
+                            setState(() => selectedPair = pairs[i]);
+                            showSignalDetails(pairs[i]);
+                          },
+                        ),
+
+                      // LIVE / DEMO CONTROL
+                      Positioned(
+                        right: 18,
+                        top: 14,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF07131F).withValues(alpha: .96),
+                            border: Border.all(
+                              color: Colors.cyanAccent.withValues(alpha: .45),
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              InkWell(
+                                onTap: switchToLive,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: marketMode == MarketMode.live
+                                        ? const Color(0xFF00C878)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: const Text(
+                                    'LIVE',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              InkWell(
+                                onTap: switchToDemo,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: marketMode == MarketMode.demo
+                                        ? const Color(0xFF3B4A5A)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(5),
+                                  ),
+                                  child: const Text(
+                                    'DEMO',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // CURRENT PRICE DISPLAY
+                      Positioned(
+                        right: 18,
+                        top: 54,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF07131F).withValues(alpha: .96),
+                            border: Border.all(
+                              color: marketMode == MarketMode.live
+                                  ? Colors.greenAccent.withValues(alpha: .55)
+                                  : Colors.orangeAccent.withValues(alpha: .55),
+                            ),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Text(
+                            '${marketMode == MarketMode.live ? "TWELVE DATA" : "DEMO"}  '
+                            '$selectedPair  '
+                            '${currentPriceText()}  '
+                            '$selectedTimeframe',
+                            style: TextStyle(
+                              color: marketMode == MarketMode.live
+                                  ? Colors.greenAccent
+                                  : Colors.orangeAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // LEFT SIDE PANELS
+                      // MARKET HEATMAP HEADER
+                      hit(
+                        left: 8,
+                        top: 118,
+                        width: 282,
+                        height: 42,
+                        onTap: () => openPanel('Market Heatmap'),
+                      ),
+
+                      // MARKET HEATMAP BODY
+                      // Leaves the timeframe selector uncovered.
+                      hit(
+                        left: 8,
+                        top: 198,
+                        width: 282,
+                        height: 255,
+                        onTap: () => openPanel('Market Heatmap'),
+                      ),
+                      hit(
+                        left: 8,
+                        top: 457,
+                        width: 282,
+                        height: 150,
+                        onTap: () => openPanel('Global Sessions'),
+                      ),
+                      hit(
+                        left: 8,
+                        top: 611,
+                        width: 282,
+                        height: 185,
+                        onTap: () => openPanel('News & Macro Impact'),
+                      ),
+
+                      // RIGHT SIDE PANELS
+                      hit(
+                        left: 1304,
+                        top: 118,
+                        width: 220,
+                        height: 555,
+                        onTap: () => openPanel('Pair Deep Scanner'),
+                      ),
+                      hit(
+                        left: 1304,
+                        top: 680,
+                        width: 220,
+                        height: 135,
+                        onTap: () => openPanel('Trade Plan AI'),
+                      ),
+
+                      // SMART MONEY
+                      hit(
+                        left: 10,
+                        top: 810,
+                        width: 280,
+                        height: 185,
+                        onTap: () => openPanel('Smart Money Tracker'),
+                      ),
+
+                      // AI PREDICTION
+                      hit(
+                        left: 301,
+                        top: 807,
+                        width: 548,
+                        height: 188,
+                        onTap: () => openPanel('AI Prediction Engine'),
+                      ),
+
+                      // MARKET REGIME
+                      hit(
+                        left: 859,
+                        top: 807,
+                        width: 225,
+                        height: 188,
+                        onTap: () => openPanel('Market Regime Detection'),
+                      ),
+
+                      // RISK POSITION SIZING
+                      hit(
+                        left: 1090,
+                        top: 807,
+                        width: 208,
+                        height: 188,
+                        onTap: () => openPanel('Risk & Position Sizing'),
+                      ),
+
+                      // ALERTS
+                      hit(
+                        left: 1305,
+                        top: 825,
+                        width: 218,
+                        height: 167,
+                        onTap: () => openPanel('Alerts & Automation'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}

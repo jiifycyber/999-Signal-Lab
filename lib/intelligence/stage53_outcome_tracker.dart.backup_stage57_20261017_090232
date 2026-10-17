@@ -1,0 +1,204 @@
+import 'advanced_combined_formula_engine.dart';
+
+class Stage53PendingPrediction {
+  final String id;
+  final String symbol;
+  final String liveDirection;
+  final double liveConfidence;
+  final double entryPrice;
+  final double stopLoss;
+  final String setup;
+  final DateTime openedAt;
+  final DateTime expiresAt;
+  final double formulaScore;
+  final double bullishProbability;
+  final double bearishProbability;
+  final double linearContribution;
+  final double interactionContribution;
+  final int interactionCount;
+  final List<double> formulaFeatures;
+
+  const Stage53PendingPrediction({
+    required this.id,
+    required this.symbol,
+    required this.liveDirection,
+    required this.liveConfidence,
+    required this.entryPrice,
+    required this.stopLoss,
+    required this.setup,
+    required this.openedAt,
+    required this.expiresAt,
+    required this.formulaScore,
+    required this.bullishProbability,
+    required this.bearishProbability,
+    required this.linearContribution,
+    required this.interactionContribution,
+    required this.interactionCount,
+    required this.formulaFeatures,
+  });
+
+  String get formulaDirection {
+    if (formulaScore > 0) return 'BUY';
+    if (formulaScore < 0) return 'SELL';
+    return 'NEUTRAL';
+  }
+
+  bool get agreesWithLive =>
+      formulaDirection != 'NEUTRAL' && formulaDirection == liveDirection;
+}
+
+class Stage53FormulaOutcome {
+  final String id;
+  final String symbol;
+  final String liveDirection;
+  final String liveOutcome;
+  final String formulaDirection;
+  final String formulaOutcome;
+  final double entryPrice;
+  final double exitPrice;
+  final double formulaScore;
+  final double bullishProbability;
+  final double bearishProbability;
+  final double linearContribution;
+  final double interactionContribution;
+  final int interactionCount;
+  final bool agreementAtEntry;
+  final DateTime openedAt;
+  final DateTime closedAt;
+  final List<double> formulaFeatures;
+
+  const Stage53FormulaOutcome({
+    required this.id,
+    required this.symbol,
+    required this.liveDirection,
+    required this.liveOutcome,
+    required this.formulaDirection,
+    required this.formulaOutcome,
+    required this.entryPrice,
+    required this.exitPrice,
+    required this.formulaScore,
+    required this.bullishProbability,
+    required this.bearishProbability,
+    required this.linearContribution,
+    required this.interactionContribution,
+    required this.interactionCount,
+    required this.agreementAtEntry,
+    required this.openedAt,
+    required this.closedAt,
+    required this.formulaFeatures,
+  });
+
+  bool get formulaWin => formulaOutcome == 'WIN';
+  bool get formulaLoss => formulaOutcome == 'LOSS';
+}
+
+class Stage53OutcomeTracker {
+  final Map<String, Stage53PendingPrediction> _pending = {};
+  final List<Stage53FormulaOutcome> _outcomes = [];
+
+  List<Stage53PendingPrediction> get pending =>
+      List.unmodifiable(_pending.values);
+
+  List<Stage53FormulaOutcome> get outcomes => List.unmodifiable(_outcomes);
+
+  void track({
+    required String id,
+    required String symbol,
+    required String liveDirection,
+    required double liveConfidence,
+    required double entryPrice,
+    required double stopLoss,
+    required String setup,
+    required DateTime openedAt,
+    required AdvancedCombinedFormulaResult formula,
+  }) {
+    if (_pending.containsKey(id)) return;
+
+    _pending[id] = Stage53PendingPrediction(
+      id: id,
+      symbol: symbol,
+      liveDirection: liveDirection,
+      liveConfidence: liveConfidence,
+      entryPrice: entryPrice,
+      stopLoss: stopLoss,
+      setup: setup,
+      openedAt: openedAt,
+      expiresAt: openedAt.add(const Duration(seconds: 60)),
+      formulaScore: formula.score,
+      bullishProbability: formula.bullishProbability,
+      bearishProbability: formula.bearishProbability,
+      linearContribution: formula.linearContribution,
+      interactionContribution: formula.interactionContribution,
+      interactionCount: formula.interactionCount,
+      formulaFeatures: List.unmodifiable(formula.normalizedFeatures),
+    );
+  }
+
+  Stage53PendingPrediction? pendingFor(String id) => _pending[id];
+
+  Stage53FormulaOutcome? resolve({
+    required String id,
+    required double exitPrice,
+    required String liveOutcome,
+    required DateTime closedAt,
+  }) {
+    final pending = _pending.remove(id);
+    if (pending == null) return null;
+
+    final direction = pending.formulaDirection;
+    String formulaOutcome;
+
+    if (direction == 'NEUTRAL') {
+      formulaOutcome = 'NEUTRAL';
+    } else {
+      final delta = exitPrice - pending.entryPrice;
+      final tieBand = pending.entryPrice.abs() * 0.0001;
+
+      if (delta.abs() <= tieBand) {
+        formulaOutcome = 'BREAKEVEN';
+      } else if ((direction == 'BUY' && delta > 0) ||
+          (direction == 'SELL' && delta < 0)) {
+        formulaOutcome = 'WIN';
+      } else {
+        formulaOutcome = 'LOSS';
+      }
+    }
+
+    final outcome = Stage53FormulaOutcome(
+      id: pending.id,
+      symbol: pending.symbol,
+      liveDirection: pending.liveDirection,
+      liveOutcome: liveOutcome,
+      formulaDirection: direction,
+      formulaOutcome: formulaOutcome,
+      entryPrice: pending.entryPrice,
+      exitPrice: exitPrice,
+      formulaScore: pending.formulaScore,
+      bullishProbability: pending.bullishProbability,
+      bearishProbability: pending.bearishProbability,
+      linearContribution: pending.linearContribution,
+      interactionContribution: pending.interactionContribution,
+      interactionCount: pending.interactionCount,
+      agreementAtEntry: pending.agreesWithLive,
+      openedAt: pending.openedAt,
+      closedAt: closedAt,
+      formulaFeatures: pending.formulaFeatures,
+    );
+
+    _outcomes.insert(0, outcome);
+    if (_outcomes.length > 500) {
+      _outcomes.removeRange(500, _outcomes.length);
+    }
+
+    return outcome;
+  }
+
+  int get wins => _outcomes.where((o) => o.formulaWin).length;
+  int get losses => _outcomes.where((o) => o.formulaLoss).length;
+
+  double get winRate {
+    final graded = wins + losses;
+    if (graded == 0) return 0.0;
+    return wins / graded * 100.0;
+  }
+}

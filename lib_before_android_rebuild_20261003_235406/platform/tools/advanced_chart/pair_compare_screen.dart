@@ -1,0 +1,1669 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+class PairCompareScreen extends StatefulWidget {
+  final String initialSymbol;
+
+  const PairCompareScreen({
+    super.key,
+    required this.initialSymbol,
+  });
+
+  @override
+  State<PairCompareScreen> createState() => _PairCompareScreenState();
+}
+
+class _CompareCandle {
+  final DateTime time;
+  final double open;
+  final double high;
+  final double low;
+  final double close;
+
+  const _CompareCandle({
+    required this.time,
+    required this.open,
+    required this.high,
+    required this.low,
+    required this.close,
+  });
+}
+
+class _PairStats {
+  final String symbol;
+  final double price;
+  final double changePct;
+  final int trendStrength;
+  final int momentumStrength;
+  final int volatility;
+  final int volumeActivity;
+  final double rsi;
+  final bool bullishTrend;
+  final bool bullishMomentum;
+  final bool bullishMacd;
+  final bool bullishMa;
+  final String srText;
+  final int bullishScore;
+  final int bearishScore;
+  final int confidence;
+
+  const _PairStats({
+    required this.symbol,
+    required this.price,
+    required this.changePct,
+    required this.trendStrength,
+    required this.momentumStrength,
+    required this.volatility,
+    required this.volumeActivity,
+    required this.rsi,
+    required this.bullishTrend,
+    required this.bullishMomentum,
+    required this.bullishMacd,
+    required this.bullishMa,
+    required this.srText,
+    required this.bullishScore,
+    required this.bearishScore,
+    required this.confidence,
+  });
+
+  bool get buy => bullishScore >= bearishScore;
+
+  String get signal => buy ? 'BUY' : 'SELL';
+
+  String get trendText => bullishTrend ? 'UP' : 'DOWN';
+
+  String get momentumText => bullishMomentum ? 'UP' : 'DOWN';
+}
+
+class _PairCompareScreenState extends State<PairCompareScreen> {
+  static const bg = Color(0xFF020811);
+  static const panel = Color(0xFF06121E);
+  static const panel2 = Color(0xFF081A29);
+  static const cyan = Color(0xFF00E5FF);
+  static const green = Color(0xFF27FF88);
+  static const red = Color(0xFFFF4057);
+  static const amber = Color(0xFFFFD23F);
+
+  late String pairA;
+  String pairB = 'GBPUSD';
+  String timeframe = 'M1';
+
+  bool loading = false;
+  String? error;
+
+  List<_CompareCandle> candlesA = const [];
+  List<_CompareCandle> candlesB = const [];
+
+  static const symbols = <String>[
+    'EURUSD',
+    'GBPUSD',
+    'USDJPY',
+    'USDCHF',
+    'USDCAD',
+    'AUDUSD',
+    'NZDUSD',
+    'EURGBP',
+    'GBPJPY',
+    'EURJPY',
+    'AUDJPY',
+    'EURUSD_OTC',
+    'GBPUSD_OTC',
+    'USDJPY_OTC',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    pairA = widget.initialSymbol
+        .toUpperCase()
+        .replaceAll('/', '')
+        .replaceAll(' ', '');
+
+    if (pairA == pairB) {
+      pairB = 'EURUSD';
+    }
+
+    _load();
+  }
+
+  Future<List<_CompareCandle>> _fetch(String symbol) async {
+    final clean = symbol.toUpperCase().replaceAll('/', '').replaceAll(' ', '');
+
+    final uri = Uri.https(
+      'bridge.sciool.net',
+      '/history/$clean',
+      <String, String>{
+        'count': '240',
+      },
+    );
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 10));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        '$clean history HTTP ${response.statusCode}',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+
+    if (decoded is! Map || decoded['candles'] is! List) {
+      throw Exception('Invalid history for $clean');
+    }
+
+    final result = <_CompareCandle>[];
+
+    for (final raw in decoded['candles'] as List) {
+      if (raw is! Map) continue;
+
+      final timestamp = raw['timestamp'];
+      final open = raw['open'];
+      final high = raw['high'];
+      final low = raw['low'];
+      final close = raw['close'];
+
+      if (timestamp is! num ||
+          open is! num ||
+          high is! num ||
+          low is! num ||
+          close is! num) {
+        continue;
+      }
+
+      result.add(
+        _CompareCandle(
+          time: DateTime.fromMillisecondsSinceEpoch(
+            timestamp.toInt() * 1000,
+          ),
+          open: open.toDouble(),
+          high: high.toDouble(),
+          low: low.toDouble(),
+          close: close.toDouble(),
+        ),
+      );
+    }
+
+    result.sort(
+      (a, b) => a.time.compareTo(b.time),
+    );
+
+    if (result.length < 10) {
+      throw Exception('Not enough history for $clean');
+    }
+
+    return result;
+  }
+
+  Future<void> _load() async {
+    if (pairA == pairB) {
+      setState(() {
+        error = 'Choose two different pairs.';
+      });
+      return;
+    }
+
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      final results = await Future.wait([
+        _fetch(pairA),
+        _fetch(pairB),
+      ]);
+
+      if (!mounted) return;
+
+      setState(() {
+        candlesA = results[0];
+        candlesB = results[1];
+        loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        loading = false;
+        error = e.toString();
+      });
+    }
+  }
+
+  double _rsi(List<_CompareCandle> source, int period) {
+    if (source.length <= period) return 50;
+
+    double gain = 0;
+    double loss = 0;
+
+    final start = source.length - period;
+
+    for (int i = start; i < source.length; i++) {
+      if (i == 0) continue;
+
+      final change = source[i].close - source[i - 1].close;
+
+      if (change >= 0) {
+        gain += change;
+      } else {
+        loss += change.abs();
+      }
+    }
+
+    if (loss == 0) return 100;
+
+    final rs = gain / loss;
+
+    return 100 - (100 / (1 + rs));
+  }
+
+  double _ema(
+    List<double> values,
+    int period,
+  ) {
+    if (values.isEmpty) return 0;
+
+    final k = 2 / (period + 1);
+    double result = values.first;
+
+    for (int i = 1; i < values.length; i++) {
+      result = values[i] * k + result * (1 - k);
+    }
+
+    return result;
+  }
+
+  _PairStats _stats(
+    String symbol,
+    List<_CompareCandle> source,
+  ) {
+    final closes = source.map((c) => c.close).toList();
+
+    final first = closes.first;
+    final last = closes.last;
+
+    final changePct = first == 0 ? 0 : ((last - first) / first) * 100;
+
+    final recentCount = math.min(20, closes.length);
+
+    final recent = closes.sublist(
+      closes.length - recentCount,
+    );
+
+    final shortMa = recent.reduce(
+          (a, b) => a + b,
+        ) /
+        recent.length;
+
+    final longCount = math.min(50, closes.length);
+
+    final longSlice = closes.sublist(
+      closes.length - longCount,
+    );
+
+    final longMa = longSlice.reduce(
+          (a, b) => a + b,
+        ) /
+        longSlice.length;
+
+    final bullishTrend = last >= shortMa && shortMa >= longMa;
+
+    final momentumLookback = math.min(8, closes.length - 1);
+
+    final momentumBase = closes[closes.length - 1 - momentumLookback];
+
+    final momentumPct =
+        momentumBase == 0 ? 0 : ((last - momentumBase) / momentumBase) * 100;
+
+    final bullishMomentum = momentumPct >= 0;
+
+    double averageRange = 0;
+
+    for (final c in source.sublist(
+      math.max(0, source.length - 30),
+    )) {
+      final base = c.close.abs() < 0.0000001 ? 1.0 : c.close.abs();
+
+      averageRange += ((c.high - c.low).abs() / base) * 100;
+    }
+
+    averageRange /= math.min(30, source.length);
+
+    final volatility = (averageRange * 700).round().clamp(0, 100);
+
+    final recentRanges = source.sublist(
+      math.max(0, source.length - 20),
+    );
+
+    final rangeValues =
+        recentRanges.map((c) => (c.high - c.low).abs()).toList();
+
+    final averageActivity = rangeValues.isEmpty
+        ? 0.0
+        : rangeValues.reduce((a, b) => a + b) / rangeValues.length;
+
+    final currentActivity = (source.last.high - source.last.low).abs();
+
+    final volumeActivity = averageActivity == 0
+        ? 50
+        : ((currentActivity / averageActivity) * 50).round().clamp(0, 100);
+
+    final rsi = _rsi(source, 14);
+
+    final ema12 = _ema(closes, 12);
+    final ema26 = _ema(closes, 26);
+
+    final bullishMacd = ema12 >= ema26;
+    final bullishMa = shortMa >= longMa;
+
+    double high = source.last.high;
+    double low = source.last.low;
+
+    for (final candle in source.sublist(
+      math.max(0, source.length - 30),
+    )) {
+      high = math.max(high, candle.high);
+      low = math.min(low, candle.low);
+    }
+
+    final range = math.max(
+      0.0000001,
+      high - low,
+    );
+
+    final position = (last - low) / range;
+
+    final srText = position < .35
+        ? 'Near Support'
+        : position > .65
+            ? 'Near Resistance'
+            : 'Mid Range';
+
+    int bull = 0;
+    int bear = 0;
+
+    void vote(bool positive, [int weight = 15]) {
+      if (positive) {
+        bull += weight;
+      } else {
+        bear += weight;
+      }
+    }
+
+    vote(bullishTrend, 20);
+    vote(bullishMomentum, 20);
+    vote(bullishMacd, 15);
+    vote(bullishMa, 15);
+    vote(rsi >= 50, 15);
+    vote(changePct >= 0, 15);
+
+    bull = bull.clamp(0, 100);
+    bear = bear.clamp(0, 100);
+
+    final difference = (bull - bear).abs();
+
+    final confidence = (55 + difference * .40).round().clamp(55, 95);
+
+    final trendStrength = (50 +
+            ((shortMa - longMa).abs() /
+                    math.max(
+                      last.abs(),
+                      0.0000001,
+                    )) *
+                8000)
+        .round()
+        .clamp(0, 100);
+
+    final momentumStrength =
+        (50 + momentumPct.abs() * 120).round().clamp(0, 100);
+
+    return _PairStats(
+      symbol: symbol,
+      price: last.toDouble(),
+      changePct: changePct.toDouble(),
+      trendStrength: trendStrength,
+      momentumStrength: momentumStrength,
+      volatility: volatility,
+      volumeActivity: volumeActivity,
+      rsi: rsi.toDouble(),
+      bullishTrend: bullishTrend,
+      bullishMomentum: bullishMomentum,
+      bullishMacd: bullishMacd,
+      bullishMa: bullishMa,
+      srText: srText,
+      bullishScore: bull,
+      bearishScore: bear,
+      confidence: confidence,
+    );
+  }
+
+  double _correlation() {
+    if (candlesA.length < 3 || candlesB.length < 3) {
+      return 0;
+    }
+
+    final count = math.min(
+      math.min(candlesA.length, candlesB.length),
+      60,
+    );
+
+    final a = candlesA.sublist(
+      candlesA.length - count,
+    );
+
+    final b = candlesB.sublist(
+      candlesB.length - count,
+    );
+
+    final ra = <double>[];
+    final rb = <double>[];
+
+    for (int i = 1; i < count; i++) {
+      ra.add(
+        a[i - 1].close == 0
+            ? 0
+            : (a[i].close - a[i - 1].close) / a[i - 1].close,
+      );
+
+      rb.add(
+        b[i - 1].close == 0
+            ? 0
+            : (b[i].close - b[i - 1].close) / b[i - 1].close,
+      );
+    }
+
+    final meanA = ra.reduce((x, y) => x + y) / ra.length;
+
+    final meanB = rb.reduce((x, y) => x + y) / rb.length;
+
+    double numerator = 0;
+    double denomA = 0;
+    double denomB = 0;
+
+    for (int i = 0; i < ra.length; i++) {
+      final da = ra[i] - meanA;
+      final db = rb[i] - meanB;
+
+      numerator += da * db;
+      denomA += da * da;
+      denomB += db * db;
+    }
+
+    final denominator = math.sqrt(denomA * denomB);
+
+    if (denominator == 0) return 0;
+
+    return (numerator / denominator).clamp(-1.0, 1.0);
+  }
+
+  Color _directionColor(bool bullish) {
+    return bullish ? green : red;
+  }
+
+  Widget _selector({
+    required String value,
+    required List<String> options,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final safeOptions = <String>{
+      value,
+      ...options,
+    }.toList();
+
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: cyan.withValues(alpha: .25),
+        ),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          dropdownColor: panel,
+          iconEnabledColor: Colors.white70,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+          items: safeOptions
+              .map(
+                (item) => DropdownMenuItem(
+                  value: item,
+                  child: Text(item),
+                ),
+              )
+              .toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _pairHero(_PairStats stats) {
+    final color = _directionColor(stats.buy);
+
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: panel,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: color.withValues(alpha: .32),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    stats.symbol,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    stats.price.toStringAsFixed(5),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 23,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${stats.changePct >= 0 ? '+' : ''}'
+                    '${stats.changePct.toStringAsFixed(2)}%',
+                    style: TextStyle(
+                      color: stats.changePct >= 0 ? green : red,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 1,
+              height: 90,
+              color: Colors.white10,
+            ),
+            const SizedBox(width: 16),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  stats.buy ? Icons.arrow_upward : Icons.arrow_downward,
+                  color: color,
+                  size: 42,
+                ),
+                Text(
+                  stats.signal,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  '${stats.confidence}%',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const Text(
+                  'Confidence',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 18),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _tinyDirection(
+                  'Trend',
+                  stats.trendText,
+                  stats.bullishTrend,
+                ),
+                const SizedBox(height: 6),
+                _tinyDirection(
+                  'Momentum',
+                  stats.momentumText,
+                  stats.bullishMomentum,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tinyDirection(
+    String label,
+    String value,
+    bool positive,
+  ) {
+    final color = _directionColor(positive);
+
+    return Row(
+      children: [
+        Text(
+          '$label: ',
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 10,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        Icon(
+          positive ? Icons.arrow_upward : Icons.arrow_downward,
+          size: 11,
+          color: color,
+        ),
+      ],
+    );
+  }
+
+  Widget _meter(
+    int a,
+    int b, {
+    required bool aBullish,
+    required bool bBullish,
+  }) {
+    return SizedBox(
+      width: 290,
+      child: Row(
+        children: [
+          Expanded(
+            flex: math.max(1, a),
+            child: Container(
+              height: 11,
+              decoration: BoxDecoration(
+                color: _directionColor(aBullish),
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(2),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 3),
+          Expanded(
+            flex: math.max(1, b),
+            child: Container(
+              height: 11,
+              decoration: BoxDecoration(
+                color: _directionColor(bBullish),
+                borderRadius: const BorderRadius.horizontal(
+                  right: Radius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metricRow(
+    String name,
+    String valueA,
+    String valueB, {
+    required int scoreA,
+    required int scoreB,
+    required bool bullishA,
+    required bool bullishB,
+  }) {
+    final winner = scoreA >= scoreB ? pairA : pairB;
+
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.white10,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 190,
+            child: Padding(
+              padding: const EdgeInsets.all(9),
+              child: Text(
+                name,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              valueA,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _directionColor(bullishA),
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          _meter(
+            scoreA,
+            scoreB,
+            aBullish: bullishA,
+            bBullish: bullishB,
+          ),
+          Expanded(
+            child: Text(
+              valueB,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _directionColor(bullishB),
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 100,
+            child: Text(
+              winner,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: green,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _comparisonTable(
+    _PairStats a,
+    _PairStats b,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white12,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            height: 34,
+            color: panel2,
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 190,
+                  child: Padding(
+                    padding: EdgeInsets.all(9),
+                    child: Text(
+                      'METRIC',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    pairA,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 290),
+                Expanded(
+                  child: Text(
+                    pairB,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+                const SizedBox(
+                  width: 100,
+                  child: Text(
+                    'ADVANTAGE',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 9,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _metricRow(
+            'Price Change (M1)',
+            '${a.changePct >= 0 ? '+' : ''}${a.changePct.toStringAsFixed(2)}%',
+            '${b.changePct >= 0 ? '+' : ''}${b.changePct.toStringAsFixed(2)}%',
+            scoreA: (a.changePct.abs() * 100).round().clamp(1, 100),
+            scoreB: (b.changePct.abs() * 100).round().clamp(1, 100),
+            bullishA: a.changePct >= 0,
+            bullishB: b.changePct >= 0,
+          ),
+          _metricRow(
+            'Trend Direction',
+            a.trendText,
+            b.trendText,
+            scoreA: a.trendStrength,
+            scoreB: b.trendStrength,
+            bullishA: a.bullishTrend,
+            bullishB: b.bullishTrend,
+          ),
+          _metricRow(
+            'Momentum Direction',
+            a.momentumText,
+            b.momentumText,
+            scoreA: a.momentumStrength,
+            scoreB: b.momentumStrength,
+            bullishA: a.bullishMomentum,
+            bullishB: b.bullishMomentum,
+          ),
+          _metricRow(
+            'Trend Strength',
+            '${a.trendStrength} / 100',
+            '${b.trendStrength} / 100',
+            scoreA: a.trendStrength,
+            scoreB: b.trendStrength,
+            bullishA: a.bullishTrend,
+            bullishB: b.bullishTrend,
+          ),
+          _metricRow(
+            'Momentum Strength',
+            '${a.momentumStrength} / 100',
+            '${b.momentumStrength} / 100',
+            scoreA: a.momentumStrength,
+            scoreB: b.momentumStrength,
+            bullishA: a.bullishMomentum,
+            bullishB: b.bullishMomentum,
+          ),
+          _metricRow(
+            'Volatility',
+            '${a.volatility} / 100',
+            '${b.volatility} / 100',
+            scoreA: a.volatility,
+            scoreB: b.volatility,
+            bullishA: a.buy,
+            bullishB: b.buy,
+          ),
+          _metricRow(
+            'Volume Activity',
+            '${a.volumeActivity} / 100',
+            '${b.volumeActivity} / 100',
+            scoreA: a.volumeActivity,
+            scoreB: b.volumeActivity,
+            bullishA: a.buy,
+            bullishB: b.buy,
+          ),
+          _metricRow(
+            'RSI (14)',
+            '${a.rsi.toStringAsFixed(1)} ${a.rsi >= 50 ? 'Bullish' : 'Bearish'}',
+            '${b.rsi.toStringAsFixed(1)} ${b.rsi >= 50 ? 'Bullish' : 'Bearish'}',
+            scoreA: a.rsi.round(),
+            scoreB: b.rsi.round(),
+            bullishA: a.rsi >= 50,
+            bullishB: b.rsi >= 50,
+          ),
+          _metricRow(
+            'MACD',
+            a.bullishMacd ? 'Bullish' : 'Bearish',
+            b.bullishMacd ? 'Bullish' : 'Bearish',
+            scoreA: a.bullishMacd ? 75 : 25,
+            scoreB: b.bullishMacd ? 75 : 25,
+            bullishA: a.bullishMacd,
+            bullishB: b.bullishMacd,
+          ),
+          _metricRow(
+            'Moving Average Alignment',
+            a.bullishMa ? 'Bullish' : 'Bearish',
+            b.bullishMa ? 'Bullish' : 'Bearish',
+            scoreA: a.bullishMa ? 75 : 25,
+            scoreB: b.bullishMa ? 75 : 25,
+            bullishA: a.bullishMa,
+            bullishB: b.bullishMa,
+          ),
+          _metricRow(
+            'Support / Resistance',
+            a.srText,
+            b.srText,
+            scoreA: a.buy ? 70 : 30,
+            scoreB: b.buy ? 70 : 30,
+            bullishA: a.buy,
+            bullishB: b.buy,
+          ),
+          _metricRow(
+            'Bullish Score',
+            '${a.bullishScore} / 100',
+            '${b.bullishScore} / 100',
+            scoreA: a.bullishScore,
+            scoreB: b.bullishScore,
+            bullishA: true,
+            bullishB: true,
+          ),
+          _metricRow(
+            'Bearish Score',
+            '${a.bearishScore} / 100',
+            '${b.bearishScore} / 100',
+            scoreA: a.bearishScore,
+            scoreB: b.bearishScore,
+            bullishA: false,
+            bullishB: false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summary(
+    _PairStats a,
+    _PairStats b,
+  ) {
+    final strengthA = a.buy ? a.bullishScore : a.bearishScore;
+
+    final strengthB = b.buy ? b.bullishScore : b.bearishScore;
+
+    final winner = strengthA >= strengthB ? a : b;
+
+    final correlation = _correlation();
+
+    return Container(
+      width: 250,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'SUMMARY',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Divider(color: Colors.white12),
+          const SizedBox(height: 12),
+          Text(
+            winner.symbol,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Text(
+            'is currently',
+            style: TextStyle(
+              color: Colors.white70,
+            ),
+          ),
+          Text(
+            'STRONGER',
+            style: TextStyle(
+              color: winner.buy ? green : red,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 18),
+          _summaryLine(
+            'Trend',
+            winner.bullishTrend,
+          ),
+          _summaryLine(
+            'Momentum',
+            winner.bullishMomentum,
+          ),
+          _summaryLine(
+            'MACD',
+            winner.bullishMacd,
+          ),
+          _summaryLine(
+            'MA Alignment',
+            winner.bullishMa,
+          ),
+          const SizedBox(height: 22),
+          const Divider(color: Colors.white12),
+          const SizedBox(height: 10),
+          const Text(
+            'CORRELATION',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            correlation.toStringAsFixed(2),
+            style: const TextStyle(
+              color: amber,
+              fontSize: 25,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            correlation > .65
+                ? 'Strong Positive'
+                : correlation > .25
+                    ? 'Moderate Positive'
+                    : correlation < -.65
+                        ? 'Strong Negative'
+                        : correlation < -.25
+                            ? 'Moderate Negative'
+                            : 'Low Correlation',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryLine(
+    String text,
+    bool positive,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Icon(
+            positive ? Icons.check_circle : Icons.cancel,
+            color: positive ? green : red,
+            size: 16,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            '$text ${positive ? 'UP' : 'DOWN'}',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _performanceChart() {
+    return Container(
+      height: 245,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'PERFORMANCE OVER TIME',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: CustomPaint(
+              painter: _ComparePerformancePainter(
+                a: candlesA,
+                b: candlesB,
+                labelA: pairA,
+                labelB: pairB,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _currentSignals(
+    _PairStats a,
+    _PairStats b,
+  ) {
+    return Container(
+      height: 245,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'CURRENT SIGNALS',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Divider(color: Colors.white12),
+          _signalRow(a),
+          const Divider(color: Colors.white12),
+          _signalRow(b),
+          const Spacer(),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: panel2,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: cyan.withValues(alpha: .20),
+              ),
+            ),
+            child: Text(
+              '${a.symbol}: ${a.signal} | Trend ${a.trendText} | Momentum ${a.momentumText}\n'
+              '${b.symbol}: ${b.signal} | Trend ${b.trendText} | Momentum ${b.momentumText}',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 10,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _signalRow(_PairStats stats) {
+    final color = stats.buy ? green : red;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text(
+              stats.symbol,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          Container(
+            width: 75,
+            padding: const EdgeInsets.symmetric(
+              vertical: 7,
+            ),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .15),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: color.withValues(alpha: .55),
+              ),
+            ),
+            child: Text(
+              stats.signal,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: LinearProgressIndicator(
+              value: stats.confidence / 100,
+              minHeight: 10,
+              backgroundColor: Colors.white10,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                color,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${stats.confidence}%',
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            stats.buy ? Icons.arrow_upward : Icons.arrow_downward,
+            color: color,
+            size: 18,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = candlesA.isNotEmpty ? _stats(pairA, candlesA) : null;
+
+    final b = candlesB.isNotEmpty ? _stats(pairB, candlesB) : null;
+
+    return Scaffold(
+      backgroundColor: bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              height: 66,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18,
+              ),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Colors.white10,
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(
+                      Icons.arrow_back,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'PAIR COMPARISON',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        '999 Signal Intelligence Pro',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  _selector(
+                    value: pairA,
+                    options: symbols,
+                    onChanged: (value) {
+                      if (value == null) return;
+
+                      setState(() {
+                        pairA = value;
+                      });
+
+                      _load();
+                    },
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16,
+                    ),
+                    child: Text(
+                      'VS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  _selector(
+                    value: pairB,
+                    options: symbols,
+                    onChanged: (value) {
+                      if (value == null) return;
+
+                      setState(() {
+                        pairB = value;
+                      });
+
+                      _load();
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  _selector(
+                    value: timeframe,
+                    options: const ['M1'],
+                    onChanged: (value) {
+                      if (value == null) return;
+
+                      setState(() {
+                        timeframe = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    tooltip: 'Refresh',
+                    onPressed: loading ? null : _load,
+                    icon: const Icon(
+                      Icons.refresh,
+                      color: cyan,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: loading && candlesA.isEmpty && candlesB.isEmpty
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: cyan,
+                      ),
+                    )
+                  : error != null && candlesA.isEmpty
+                      ? Center(
+                          child: Text(
+                            error!,
+                            style: const TextStyle(
+                              color: red,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.all(
+                            16,
+                          ),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minWidth: 1100,
+                            ),
+                            child: Column(
+                              children: [
+                                if (error != null)
+                                  Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(
+                                      bottom: 12,
+                                    ),
+                                    padding: const EdgeInsets.all(
+                                      10,
+                                    ),
+                                    color: red.withValues(
+                                      alpha: .10,
+                                    ),
+                                    child: Text(
+                                      error!,
+                                      style: const TextStyle(
+                                        color: red,
+                                      ),
+                                    ),
+                                  ),
+                                if (a != null && b != null) ...[
+                                  Row(
+                                    children: [
+                                      _pairHero(a),
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                        ),
+                                        child: Text(
+                                          'VS',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                      _pairHero(b),
+                                    ],
+                                  ),
+                                  const SizedBox(
+                                    height: 12,
+                                  ),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: _comparisonTable(
+                                          a,
+                                          b,
+                                        ),
+                                      ),
+                                      const SizedBox(
+                                        width: 12,
+                                      ),
+                                      _summary(a, b),
+                                    ],
+                                  ),
+                                  const SizedBox(
+                                    height: 12,
+                                  ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        flex: 3,
+                                        child: _performanceChart(),
+                                      ),
+                                      const SizedBox(
+                                        width: 12,
+                                      ),
+                                      Expanded(
+                                        flex: 2,
+                                        child: _currentSignals(
+                                          a,
+                                          b,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ComparePerformancePainter extends CustomPainter {
+  final List<_CompareCandle> a;
+  final List<_CompareCandle> b;
+  final String labelA;
+  final String labelB;
+
+  const _ComparePerformancePainter({
+    required this.a,
+    required this.b,
+    required this.labelA,
+    required this.labelB,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (a.length < 2 || b.length < 2) return;
+
+    final count = math.min(
+      math.min(a.length, b.length),
+      90,
+    );
+
+    final aa = a.sublist(a.length - count);
+
+    final bb = b.sublist(b.length - count);
+
+    final startA = aa.first.close;
+    final startB = bb.first.close;
+
+    if (startA == 0 || startB == 0) return;
+
+    final ar = aa
+        .map(
+          (c) => ((c.close - startA) / startA) * 100,
+        )
+        .toList();
+
+    final br = bb
+        .map(
+          (c) => ((c.close - startB) / startB) * 100,
+        )
+        .toList();
+
+    double low = math.min(
+      ar.reduce(math.min),
+      br.reduce(math.min),
+    );
+
+    double high = math.max(
+      ar.reduce(math.max),
+      br.reduce(math.max),
+    );
+
+    if ((high - low).abs() < .000001) {
+      high += 1;
+      low -= 1;
+    }
+
+    final gridPaint = Paint()
+      ..color = Colors.white.withValues(alpha: .06)
+      ..strokeWidth = 1;
+
+    for (int i = 0; i <= 4; i++) {
+      final y = size.height * i / 4;
+
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width, y),
+        gridPaint,
+      );
+    }
+
+    double yFor(double value) {
+      return size.height - ((value - low) / (high - low)) * size.height;
+    }
+
+    Path makePath(List<double> values) {
+      final path = Path();
+
+      for (int i = 0; i < values.length; i++) {
+        final x = size.width * i / (values.length - 1);
+
+        final y = yFor(values[i]);
+
+        if (i == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+
+      return path;
+    }
+
+    canvas.drawPath(
+      makePath(ar),
+      Paint()
+        ..color = const Color(0xFF27FF88)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+
+    canvas.drawPath(
+      makePath(br),
+      Paint()
+        ..color = const Color(0xFFFF4057)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant _ComparePerformancePainter oldDelegate,
+  ) {
+    return oldDelegate.a.length != a.length ||
+        oldDelegate.b.length != b.length ||
+        (a.isNotEmpty &&
+            oldDelegate.a.isNotEmpty &&
+            a.last.close != oldDelegate.a.last.close) ||
+        (b.isNotEmpty &&
+            oldDelegate.b.isNotEmpty &&
+            b.last.close != oldDelegate.b.last.close);
+  }
+}

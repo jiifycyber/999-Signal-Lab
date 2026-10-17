@@ -50,6 +50,8 @@ class TwelveDataStreamService {
     );
   }
 
+  final Map<String, DateTime> _lastAcceptedTick = {};
+
   void _handleMessage(dynamic message) {
     try {
       final data = jsonDecode(message as String);
@@ -57,14 +59,20 @@ class TwelveDataStreamService {
       if (data is! Map<String, dynamic>) return;
       if (data['event'] != 'price') return;
 
-      final symbol = '${data['symbol']}';
+      final rawSymbol = '${data['symbol']}';
+      final symbol = rawSymbol.replaceFirst(
+        RegExp(r'_otc$', caseSensitive: false),
+        '_OTC',
+      );
       final rawPrice = data['price'];
 
       final price = rawPrice is num
           ? rawPrice.toDouble()
           : double.tryParse(rawPrice?.toString() ?? '');
 
-      if (symbol.isEmpty || price == null) return;
+      if (symbol.isEmpty || price == null || !price.isFinite || price <= 0) {
+        return;
+      }
 
       final timestampRaw = data['timestamp'];
 
@@ -75,6 +83,17 @@ class TwelveDataStreamService {
           (timestampRaw.toDouble() * 1000).round(),
         );
       }
+
+      final now = DateTime.now();
+      final age = now.difference(timestamp);
+      if (age > const Duration(seconds: 3) ||
+          age < const Duration(seconds: -2)) {
+        return;
+      }
+
+      final previous = _lastAcceptedTick[symbol];
+      if (previous != null && timestamp.isBefore(previous)) return;
+      _lastAcceptedTick[symbol] = timestamp;
 
       if (!_controller.isClosed) {
         _controller.add(

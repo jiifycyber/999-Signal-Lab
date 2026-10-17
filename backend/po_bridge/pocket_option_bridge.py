@@ -21,6 +21,17 @@ DEFAULT_SYMBOLS = [
     "AUDUSD",
     "NZDUSD",
     "AUDJPY",
+    "EURUSD_otc",
+    "GBPUSD_otc",
+    "USDJPY_otc",
+    "USDCHF_otc",
+    "USDCAD_otc",
+    "AUDUSD_otc",
+    "NZDUSD_otc",
+    "AUDJPY_otc",
+    "AUDNZD_otc",
+    "AUDCAD_otc",
+    "AUDCHF_otc",
 ]
 
 
