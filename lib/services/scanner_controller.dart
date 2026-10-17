@@ -178,14 +178,23 @@ class ScannerController {
       },
     );
 
-    Future.wait<bool>([
-      formulaLearningStore.restore(
-        scannerEngine.advancedFormulaLearningEngine,
+    // Start live Pocket Option market data immediately.
+    // Learning/history restoration must never block the price feed.
+    marketDataService.start();
+
+    unawaited(
+      Future.wait<bool>([
+        formulaLearningStore.restore(
+          scannerEngine.advancedFormulaLearningEngine,
+        ),
+        formulaOutcomeHistoryStore.restore(
+          formulaOutcomeTracker,
+        ),
+      ]).then<void>(
+        (_) {},
+        onError: (_) {},
       ),
-      formulaOutcomeHistoryStore.restore(
-        formulaOutcomeTracker,
-      ),
-    ]).whenComplete(marketDataService.start);
+    );
   }
 
   void _resolveExpiredPredictions() {
