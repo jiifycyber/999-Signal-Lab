@@ -201,6 +201,7 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
           latestPrices[symbol] = quote.price;
           latestPriceTimes[symbol] = quote.timestamp;
+          print('[PO-5 DASHBOARD] \$symbol \${quote.price}');
 
           if (symbol == _normalize(selectedPair)) {
             debugPrint(
@@ -543,9 +544,12 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
       backgroundColor: bg,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final actualScreenWidth = MediaQuery.of(context).size.width;
+          final screenSize = MediaQuery.of(context).size;
+          final actualScreenWidth = screenSize.width;
+          final shortestSide = screenSize.shortestSide;
+          final phoneLayout = actualScreenWidth < 1100 || shortestSide < 700;
 
-          if (actualScreenWidth < 1100) {
+          if (phoneLayout) {
             return _mobileDashboard();
           }
 
@@ -657,6 +661,26 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
     final measuredWinRate = performance.closedSignals == 0
         ? '--'
         : '${performance.winRate.toStringAsFixed(1)}%';
+
+    final stage52 =
+        scannerController.scannerEngine.advancedFormulaFor(selectedPair);
+    final formulaTracker = scannerController.formulaOutcomeTracker;
+    final formulaLearningMode = scannerController.formulaLearningMode;
+    final formulaRollbackEngaged = scannerController.formulaRollbackEngaged;
+    final formulaLearningCount =
+        scannerController.scannerEngine.advancedFormulaLearningCount;
+    final formulaWeightDrift =
+        scannerController.scannerEngine.advancedFormulaWeightDrift;
+    final formulaLastError =
+        scannerController.scannerEngine.advancedFormulaLastError;
+    final formulaLastTarget =
+        scannerController.scannerEngine.advancedFormulaLastTarget;
+    final formulaLastPredictedScore =
+        scannerController.scannerEngine.advancedFormulaLastPredictedScore;
+    final formulaTopInteraction =
+        scannerController.scannerEngine.advancedFormulaStrongestInteraction;
+    final formulaWeights =
+        scannerController.scannerEngine.advancedFormulaWeights;
 
     return SafeArea(
       child: Container(
@@ -1233,6 +1257,248 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
                       ),
                     ),
 
+                    _glass(
+                      title: 'FORMULA INTELLIGENCE • STAGE 51–60',
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'FORMULA SCORE',
+                                      stage52 == null
+                                          ? '--'
+                                          : stage52.score.toStringAsFixed(1),
+                                      stage52 == null
+                                          ? cyan
+                                          : stage52.score >= 0
+                                              ? green
+                                              : red)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'BULLISH %',
+                                      stage52 == null
+                                          ? '--'
+                                          : '${(stage52.bullishProbability * 100).toStringAsFixed(1)}%',
+                                      green)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'BEARISH %',
+                                      stage52 == null
+                                          ? '--'
+                                          : '${(stage52.bearishProbability * 100).toStringAsFixed(1)}%',
+                                      red)),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          if (stage52 != null)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _mobileFormulaBar(
+                                    'BULLISH PRESSURE',
+                                    stage52.bullishProbability,
+                                    green,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _mobileFormulaBar(
+                                    'BEARISH PRESSURE',
+                                    stage52.bearishProbability,
+                                    red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          const SizedBox(height: 9),
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'AGREEMENT',
+                                      stage52 == null || signal == null
+                                          ? '--'
+                                          : ((stage52.score >= 0 &&
+                                                      signal.direction ==
+                                                          TradeDirection.buy) ||
+                                                  (stage52.score < 0 &&
+                                                      signal.direction ==
+                                                          TradeDirection.sell))
+                                              ? 'YES'
+                                              : 'NO',
+                                      stage52 == null || signal == null
+                                          ? amber
+                                          : ((stage52.score >= 0 &&
+                                                      signal.direction ==
+                                                          TradeDirection.buy) ||
+                                                  (stage52.score < 0 &&
+                                                      signal.direction ==
+                                                          TradeDirection.sell))
+                                              ? green
+                                              : red)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox('LEARNING COUNT',
+                                      formulaLearningCount.toString(), cyan)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'WEIGHT DRIFT',
+                                      formulaWeightDrift.toStringAsFixed(5),
+                                      purple)),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'LAST ERROR',
+                                      formulaLastError.toStringAsFixed(4),
+                                      amber)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'LAST TARGET',
+                                      formulaLastTarget.toStringAsFixed(1),
+                                      cyan)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'LAST PRED',
+                                      formulaLastPredictedScore
+                                          .toStringAsFixed(1),
+                                      purple)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 9),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: .18),
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(
+                                  color: cyan.withValues(alpha: .16)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    'TOP INTERACTION  ${formulaTopInteraction.key}  ${formulaTopInteraction.value.toStringAsFixed(5)}',
+                                    style: const TextStyle(
+                                        color: cyan,
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w800)),
+                                const SizedBox(height: 5),
+                                Text(
+                                    'WEIGHTS TOP 3  ${formulaWeights.take(3).map((v) => v.toStringAsFixed(3)).join("  •  ")}',
+                                    style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w700)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    _glass(
+                      title: 'VALIDATION & SAFETY STATUS',
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'VALIDATION',
+                                      formulaTracker.validationStatus,
+                                      formulaTracker.validationStatus ==
+                                              'HEALTHY'
+                                          ? green
+                                          : formulaTracker.validationStatus ==
+                                                  'DEGRADED'
+                                              ? red
+                                              : amber)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'LEARNING MODE',
+                                      formulaLearningMode,
+                                      formulaLearningMode == 'ACTIVE'
+                                          ? green
+                                          : formulaLearningMode == 'CAUTION'
+                                              ? amber
+                                              : red)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'ROLLBACK',
+                                      formulaRollbackEngaged
+                                          ? 'ENGAGED'
+                                          : 'STANDBY',
+                                      formulaRollbackEngaged ? red : cyan)),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'GRADED SAMPLE',
+                                      formulaTracker.gradedCount.toString(),
+                                      cyan)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'RECENT WIN %',
+                                      '${formulaTracker.recentWinRate.toStringAsFixed(1)}%',
+                                      formulaTracker.recentWinRate >= 50
+                                          ? green
+                                          : red)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'LONG WIN %',
+                                      '${formulaTracker.longTermWinRate.toStringAsFixed(1)}%',
+                                      formulaTracker.longTermWinRate >= 50
+                                          ? green
+                                          : red)),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Row(
+                            children: [
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'AGREE WIN %',
+                                      '${formulaTracker.agreementWinRate.toStringAsFixed(1)}%',
+                                      formulaTracker.agreementWinRate >= 50
+                                          ? green
+                                          : amber)),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                  child: _mobileStatusBox(
+                                      'DISAGREE WIN %',
+                                      '${formulaTracker.disagreementWinRate.toStringAsFixed(1)}%',
+                                      formulaTracker.disagreementWinRate >= 50
+                                          ? green
+                                          : amber)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
                     const SizedBox(height: 10),
 
                     // =========================
@@ -1429,6 +1695,52 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _mobileFormulaBar(
+    String label,
+    double value,
+    Color color,
+  ) {
+    final progress = value.clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 6.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: .5,
+                ),
+              ),
+            ),
+            Text(
+              "${(progress * 100).toStringAsFixed(1)}%",
+              style: TextStyle(
+                color: color,
+                fontSize: 7.5,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 5,
+            backgroundColor: Colors.white10,
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        ),
+      ],
     );
   }
 

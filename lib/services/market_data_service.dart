@@ -60,6 +60,7 @@ class MarketDataService {
       final oldPrice = _livePrices[tick.symbol] ?? tick.price;
 
       _livePrices[tick.symbol] = tick.price;
+      print('[PO-3 MARKET] \${tick.symbol} \${tick.price}');
 
       final quote = ForexQuote(
         symbol: tick.symbol,

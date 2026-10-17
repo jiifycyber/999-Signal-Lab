@@ -155,6 +155,12 @@ class TwelveDataStreamService {
 
       if (data is! Map<String, dynamic>) return;
       if (data['event'] != 'price') return;
+      print("[PO-1 RAW] symbol=" +
+          data['symbol'].toString() +
+          " price=" +
+          data['price'].toString() +
+          " ts=" +
+          data['timestamp'].toString());
 
       final rawSymbol = '${data['symbol']}';
       final symbol = rawSymbol.replaceFirst(
@@ -200,6 +206,7 @@ class TwelveDataStreamService {
 
       _lastAcceptedTick[symbol] = timestamp;
       _lastTickAt = now;
+      print('[PO-2 ACCEPTED] \$symbol \$price \$timestamp');
 
       if (!_controller.isClosed) {
         _controller.add(

@@ -90,6 +90,7 @@ class ScannerController {
       (quotes) {
         for (final quote in quotes) {
           _latestQuotes[quote.symbol] = quote;
+          print('[PO-4 CONTROLLER] \${quote.symbol} \${quote.price}');
         }
 
         if (!_quoteController.isClosed) {
