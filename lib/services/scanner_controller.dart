@@ -94,9 +94,12 @@ class ScannerController {
       dukeSignalHistoryStore.restore(dukeBridge.duke.signalMemory).then<void>(
         (_) {
           _dukeHistoryReady = true;
+          print(
+              '[LEDGER-RESTORE] ready=true total=${dukeBridge.duke.signalMemory.records.length}');
         },
         onError: (_) {
           _dukeHistoryReady = true;
+          print('[LEDGER-RESTORE-ERROR] ready=true');
         },
       ),
     );
@@ -149,6 +152,9 @@ class ScannerController {
                 liveQuote.price > 0) {
               final decision = _rawDirection(finalSignal.direction);
 
+              print(
+                  '[LEDGER-OPEN-TRY] ${finalSignal.symbol} ${_rawDirection(finalSignal.direction)} price=${liveQuote.price}');
+
               final signalRecord = dukeBridge.duke.signalMemory.recordSignal(
                 symbol: finalSignal.symbol,
                 decision: decision,
@@ -159,6 +165,9 @@ class ScannerController {
               unawaited(
                 dukeSignalHistoryStore.save(dukeBridge.duke.signalMemory),
               );
+
+              print(
+                  '[LEDGER-OPENED] id=${signalRecord.id} pending=${pendingPredictions}');
 
               formulaOutcomeTracker.track(
                 id: signalRecord.id,
@@ -245,6 +254,10 @@ class ScannerController {
         .where((record) => record.isOpen)
         .toList();
 
+    if (openRecords.isNotEmpty) {
+      print('[LEDGER-RESOLVE] open=${openRecords.length}');
+    }
+
     for (final record in openRecords) {
       final quote = _latestQuotes[record.symbol];
 
@@ -257,6 +270,9 @@ class ScannerController {
       // The resolver is market-data driven. It waits until the feed itself
       // has reached or passed the 60-second expiration timestamp.
       if (quote.timestamp.isBefore(expiresAt)) {
+        final remaining = expiresAt.difference(quote.timestamp).inSeconds;
+        print(
+            '[LEDGER-WAIT] ${record.symbol} remaining=$remaining quote=${quote.timestamp.toIso8601String()} expires=${expiresAt.toIso8601String()}');
         continue;
       }
 
@@ -268,8 +284,12 @@ class ScannerController {
       );
 
       if (closed == null) {
+        print('[LEDGER-CLOSE-FAILED] ${record.id}');
         continue;
       }
+
+      print(
+          '[LEDGER-CLOSED] ${closed.symbol} ${closed.outcome} entry=${closed.entryPrice} exit=${closed.exitPrice}');
 
       unawaited(
         dukeSignalHistoryStore.save(dukeBridge.duke.signalMemory),

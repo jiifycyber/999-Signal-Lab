@@ -5,6 +5,7 @@ import 'login_screen.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'models/scan_signal.dart';
 import 'services/scanner_controller.dart';
@@ -18,9 +19,13 @@ const bool kUseProLiveDashboard = true;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   await Supabase.initialize(
     url: 'https://qspasdiorjxoymvenqsj.supabase.co',
-    anonKey: 'sb_publishable_-SrzGiZFJSvCCQhTa9O31Q_QFbwbawj',
+    publishableKey: 'sb_publishable_-SrzGiZFJSvCCQhTa9O31Q_QFbwbawj',
   );
   runApp(const NexusApp());
 }

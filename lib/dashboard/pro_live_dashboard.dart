@@ -201,7 +201,7 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
 
           latestPrices[symbol] = quote.price;
           latestPriceTimes[symbol] = quote.timestamp;
-          print('[PO-5 DASHBOARD] \$symbol \${quote.price}');
+          print('[PO-5 DASHBOARD] $symbol ${quote.price}');
 
           if (symbol == _normalize(selectedPair)) {
             debugPrint(
@@ -1505,7 +1505,8 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
                     // PERFORMANCE
                     // =========================
                     _glass(
-                      title: 'PERFORMANCE SUMMARY',
+                      title:
+                          'PERFORMANCE SUMMARY • TOTAL ${performance.totalSignals} • PENDING ${scannerController.pendingPredictions} • CLOSED ${performance.closedSignals}',
                       padding: const EdgeInsets.fromLTRB(
                         10,
                         12,
@@ -7276,99 +7277,89 @@ class _ProLiveDashboardState extends State<ProLiveDashboard> {
             borderColor: amber.withValues(alpha: 0.42),
             padding: const EdgeInsets.all(7),
             title: 'MARKET INTELLIGENCE FEED',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 27,
-                      height: 27,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: amber.withValues(alpha: 0.07),
-                        border: Border.all(
-                          color: amber.withValues(alpha: 0.35),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: amber.withValues(alpha: 0.10),
-                            blurRadius: 7,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.public,
-                        color: amber,
-                        size: 14,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'MACRO FEED',
-                            style: TextStyle(
-                              color: Colors.white60,
-                              fontSize: 7,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          Text(
-                            'AWAITING LIVE SOURCE',
-                            style: TextStyle(
-                              color: amber,
-                              fontSize: 6.2,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-                Container(
-                  height: 1,
-                  color: amber.withValues(alpha: 0.18),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'No simulated market news. Live macro integration will populate this command feed.',
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 6.6,
-                    height: 1.3,
-                  ),
-                ),
-                const Spacer(),
-                Row(
-                  children: [
-                    Container(
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: amber,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text(
-                      'SOURCE STATUS: STANDBY',
-                      style: TextStyle(
-                        color: Colors.white30,
-                        fontSize: 5.8,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            child: _formulaMarketIntelligenceFeed(
+              amber: amber,
+              green: green,
+              red: red,
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _formulaMarketIntelligenceFeed({
+    required Color amber,
+    required Color green,
+    required Color red,
+  }) {
+    final tracker = scannerController.formulaOutcomeTracker;
+    final pending = tracker.pending;
+    final outcomes = tracker.outcomes;
+    final p = pending.isNotEmpty ? pending.last : null;
+    final o = outcomes.isNotEmpty ? outcomes.first : null;
+
+    final Color c = p != null
+        ? amber
+        : o?.formulaOutcome == 'WIN'
+            ? green
+            : o?.formulaOutcome == 'LOSS'
+                ? red
+                : amber;
+
+    final String headline = p != null
+        ? '${p.symbol} • ${p.formulaDirection} @ ${p.entryPrice.toStringAsFixed(5)}'
+        : o != null
+            ? '${o.symbol} • ${o.formulaDirection} • ${o.formulaOutcome}'
+            : 'WAITING FOR FORMULA ENTRY';
+
+    final String detail = p != null
+        ? '60S PENDING • SCORE ${p.formulaScore.toStringAsFixed(1)}'
+        : o != null
+            ? '${o.entryPrice.toStringAsFixed(5)} → ${o.exitPrice.toStringAsFixed(5)}'
+            : 'Formula authority is reading live Pocket Option data.';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'FORMULA FEED',
+          style: TextStyle(
+            color: c,
+            fontSize: 7,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          headline,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 7,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          detail,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white54,
+            fontSize: 6.2,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          '${pending.length} ACTIVE • ${tracker.gradedCount} GRADED • '
+          '${tracker.winRate.toStringAsFixed(1)}% WIN • ${tracker.validationStatus}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white38,
+            fontSize: 5.8,
           ),
         ),
       ],

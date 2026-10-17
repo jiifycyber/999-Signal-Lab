@@ -73,19 +73,6 @@ class TwelveDataStreamService {
 
       _channel = channel;
 
-      await channel.ready;
-
-      if (_disposed || _manualDisconnect) {
-        await channel.sink.close();
-        if (identical(_channel, channel)) {
-          _channel = null;
-        }
-        return;
-      }
-
-      _reconnectAttempt = 0;
-      _lastTickAt = DateTime.now();
-
       _subscription = channel.stream.listen(
         _handleMessage,
         onError: (_) {
@@ -102,6 +89,19 @@ class TwelveDataStreamService {
         },
         cancelOnError: false,
       );
+
+      await channel.ready;
+
+      if (_disposed || _manualDisconnect) {
+        await channel.sink.close();
+        if (identical(_channel, channel)) {
+          _channel = null;
+        }
+        return;
+      }
+
+      _reconnectAttempt = 0;
+      _lastTickAt = DateTime.now();
     } catch (_) {
       _channel = null;
       _scheduleReconnect();
@@ -206,7 +206,7 @@ class TwelveDataStreamService {
 
       _lastAcceptedTick[symbol] = timestamp;
       _lastTickAt = now;
-      print('[PO-2 ACCEPTED] \$symbol \$price \$timestamp');
+      print('[PO-2 ACCEPTED] $symbol $price $timestamp');
 
       if (!_controller.isClosed) {
         _controller.add(

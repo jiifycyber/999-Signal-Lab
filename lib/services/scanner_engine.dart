@@ -264,36 +264,16 @@ class ScannerEngine {
 
     final tickScore = _tickMomentumScore(ticks);
 
-    // TREND-FIRST DIRECTION MODEL
+    // =============================================================
+    // ADVANCED FORMULA EVIDENCE LAYER
     //
-    // M5 = primary trend authority
-    // M15 = broader directional context
-    // M1 = entry timing / immediate confirmation
-    //
-    // Tick momentum is intentionally excluded from directional control.
-    // A brief pullback must not reverse the established market trend.
-    final ensembleScore = ((m1Analysis.score * 0.20) +
-            (m5Analysis.score * 0.55) +
-            (m15Analysis.score * 0.25))
-        .clamp(-100.0, 100.0)
-        .toDouble();
-
-    // ===========================================
-    // STAGE 51 — ADVANCED COMBINED FORMULA SHADOW INTELLIGENCE
-    //
-    // This calculation does NOT control live BUY/SELL direction.
-    // The existing M1/M5/M15 ensemble remains authoritative.
-    // ===========================================
+    // M1 / M5 / M15 and tick momentum are evidence only.
+    // They do not own final direction.
+    // =============================================================
     final dynamics = _dynamicsResults[quote.symbol];
     final geometry = _geometryResults[quote.symbol];
 
     if (dynamics != null && geometry != null) {
-      final orientation = ensembleScore > 0
-          ? 1.0
-          : ensembleScore < 0
-              ? -1.0
-              : 0.0;
-
       final fallbackScale = max(
         _fallbackDistance(quote.symbol, quote.price),
         quote.price.abs() * 0.000001,
@@ -308,13 +288,35 @@ class ScannerEngine {
       final jerkFeature =
           (dynamics.jerk / fallbackScale).clamp(-1.0, 1.0).toDouble();
 
+      // Intrinsic short-horizon orientation comes from measured motion.
+      final motionComposite = ((velocityFeature * 0.50) +
+              (accelerationFeature * 0.30) +
+              (jerkFeature * 0.20))
+          .clamp(-1.0, 1.0)
+          .toDouble();
+
+      final orientation = motionComposite > 0
+          ? 1.0
+          : motionComposite < 0
+              ? -1.0
+              : 0.0;
+
       final volatilityFeature = orientation *
           (dynamics.volatility * 1000.0).clamp(0.0, 1.0).toDouble();
 
-      final probabilityFeature =
-          (ensembleScore / 100.0).clamp(-1.0, 1.0).toDouble();
+      // Balanced market evidence enters the formula as one feature.
+      // It is not a separate directional authority.
+      final probabilityFeature = ((m1Analysis.score +
+                  m5Analysis.score +
+                  m15Analysis.score +
+                  tickScore) /
+              400.0)
+          .clamp(-1.0, 1.0)
+          .toDouble();
 
-      const predictionErrorLearningFeature = 0.0;
+      // Formula feature #6 uses the most recent verified learning error.
+      final predictionErrorLearningFeature =
+          _advancedFormulaEngine.lastLearningError.clamp(-1.0, 1.0).toDouble();
 
       final rectilinearFeature = orientation *
           (geometry.rectilinearScore / 100.0).clamp(0.0, 1.0).toDouble();
@@ -354,19 +356,20 @@ class ScannerEngine {
       );
     }
 
-    TradeDirection direction;
+    TradeDirection direction = TradeDirection.wait;
 
-    if (ensembleScore > 0) {
-      direction = TradeDirection.buy;
-    } else if (ensembleScore < 0) {
-      direction = TradeDirection.sell;
-    } else if (ticks.length >= 2) {
-      direction = ticks.last >= ticks[ticks.length - 2]
-          ? TradeDirection.buy
-          : TradeDirection.sell;
-    } else {
-      direction =
-          quote.price >= quote.open ? TradeDirection.buy : TradeDirection.sell;
+    // FORMULA AUTHORITY — final BUY / SELL / WAIT decision.
+    final formulaResult = _advancedFormulaResults[quote.symbol];
+    final formulaScore = formulaResult?.score ?? 0.0;
+    final bullishProbability = formulaResult?.bullishProbability ?? 0.5;
+    final bearishProbability = formulaResult?.bearishProbability ?? 0.5;
+
+    if (formulaResult != null) {
+      if (formulaScore > 0.0 && bullishProbability >= 0.55) {
+        direction = TradeDirection.buy;
+      } else if (formulaScore < 0.0 && bearishProbability >= 0.55) {
+        direction = TradeDirection.sell;
+      }
     }
 
     final buy = direction == TradeDirection.buy;
@@ -393,11 +396,15 @@ class ScannerEngine {
     // handful of candles exist.
     final maturity = (m1.length / 30.0).clamp(0.15, 1.0).toDouble();
 
-    final directionalStrength =
-        ensembleScore.abs().clamp(0.0, 100.0).toDouble();
-
-    final confidence = (50.0 + (directionalStrength * 0.43 * maturity))
-        .clamp(50.0, 95.0)
+    final directionalStrength = formulaScore.abs().clamp(0.0, 100.0).toDouble();
+    final formulaConfidence = ((bullishProbability > bearishProbability
+                ? bullishProbability
+                : bearishProbability) *
+            100.0)
+        .clamp(50.0, 99.9)
+        .toDouble();
+    final confidence = (50.0 + ((formulaConfidence - 50.0) * maturity))
+        .clamp(50.0, 99.9)
         .toDouble();
 
     final riskDistance = max(

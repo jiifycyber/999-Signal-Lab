@@ -8,9 +8,8 @@ import 'dart:math';
 ///
 /// 12 normalized intelligence features + 66 pairwise interactions.
 ///
-/// STAGE 51 MODE:
-/// SHADOW INTELLIGENCE ONLY.
-/// This engine does NOT control live BUY/SELL direction yet.
+/// FORMULA AUTHORITY MODE:
+/// This engine controls BUY / SELL / WAIT scanner direction.
 /// ===============================================================
 
 class AdvancedCombinedFormulaInput {

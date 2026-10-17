@@ -153,22 +153,10 @@ class AgentDukeMasterEngine {
         .clamp(0.0, 100.0)
         .toDouble();
 
-    // Avoid flooding signal memory with every weak tick.
-    // This affects learning records ONLY.
-    // It does NOT remove BUY/SELL from the live scanner.
-    final recordForLearning =
-        adaptiveDecision.qualified && gateResult.tradeApproved;
-
+    // FORMULA AUTHORITY MODE:
+    // ScannerController owns the single official 60-second ledger.
+    // Duke remains supporting quality/ranking intelligence only.
     DukeSignalRecord? record;
-
-    if (recordForLearning) {
-      record = signalMemory.recordSignal(
-        symbol: input.symbol,
-        decision: finalDecision,
-        confidence: combinedQuality,
-        entryPrice: input.currentPrice,
-      );
-    }
 
     final explanation = 'Duke 60-second forecast: '
         '$finalDecision ${input.symbol}. '
