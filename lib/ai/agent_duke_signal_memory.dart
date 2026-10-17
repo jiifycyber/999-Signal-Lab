@@ -120,6 +120,63 @@ class AgentDukeSignalMemory {
     return record;
   }
 
+  Map<String, dynamic> exportState() {
+    return {
+      'records': _records
+          .map((record) => {
+                'id': record.id,
+                'symbol': record.symbol,
+                'decision': record.decision,
+                'confidence': record.confidence,
+                'entryPrice': record.entryPrice,
+                'openedAt': record.openedAt.toIso8601String(),
+                'exitPrice': record.exitPrice,
+                'closedAt': record.closedAt?.toIso8601String(),
+                'status': record.status,
+                'outcome': record.outcome,
+                'pnlPercent': record.pnlPercent,
+              })
+          .toList(),
+    };
+  }
+
+  bool restoreState(Map<String, dynamic> state) {
+    try {
+      final rawRecords = state['records'];
+      if (rawRecords is! List) return false;
+
+      final restored = <DukeSignalRecord>[];
+      for (final raw in rawRecords) {
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        restored.add(
+          DukeSignalRecord(
+            id: map['id'] as String,
+            symbol: map['symbol'] as String,
+            decision: map['decision'] as String,
+            confidence: (map['confidence'] as num).toDouble(),
+            entryPrice: (map['entryPrice'] as num).toDouble(),
+            openedAt: DateTime.parse(map['openedAt'] as String),
+            exitPrice: (map['exitPrice'] as num?)?.toDouble(),
+            closedAt: map['closedAt'] == null
+                ? null
+                : DateTime.parse(map['closedAt'] as String),
+            status: map['status'] as String? ?? 'OPEN',
+            outcome: map['outcome'] as String? ?? 'PENDING',
+            pnlPercent: (map['pnlPercent'] as num?)?.toDouble() ?? 0,
+          ),
+        );
+      }
+
+      _records
+        ..clear()
+        ..addAll(restored);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   DukePerformanceSummary performance() {
     final closed = _records.where((record) => !record.isOpen).toList();
 

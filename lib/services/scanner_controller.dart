@@ -14,6 +14,7 @@ import '../intelligence/alert_engine.dart';
 import '../intelligence/stage53_outcome_tracker.dart';
 import '../intelligence/formula_learning_store.dart';
 import '../intelligence/formula_outcome_history_store.dart';
+import '../intelligence/duke_signal_history_store.dart';
 
 class ScannerController {
   final IntelligenceStore intelligenceStore = IntelligenceStore();
@@ -28,6 +29,8 @@ class ScannerController {
   final FormulaLearningStore formulaLearningStore = FormulaLearningStore();
   final FormulaOutcomeHistoryStore formulaOutcomeHistoryStore =
       FormulaOutcomeHistoryStore();
+  final DukeSignalHistoryStore dukeSignalHistoryStore =
+      DukeSignalHistoryStore();
 
   List<Stage53FormulaOutcome> get formulaOutcomes =>
       formulaOutcomeTracker.outcomes;
@@ -50,6 +53,7 @@ class ScannerController {
 
   bool _formulaLearningFrozen = false;
   bool _formulaRollbackEngaged = false;
+  bool _dukeHistoryReady = false;
 
   bool get formulaLearningFrozen => _formulaLearningFrozen;
   bool get formulaRollbackEngaged => _formulaRollbackEngaged;
@@ -86,11 +90,22 @@ class ScannerController {
   void start() {
     _quoteSubscription?.cancel();
 
+    unawaited(
+      dukeSignalHistoryStore.restore(dukeBridge.duke.signalMemory).then<void>(
+        (_) {
+          _dukeHistoryReady = true;
+        },
+        onError: (_) {
+          _dukeHistoryReady = true;
+        },
+      ),
+    );
+
     _quoteSubscription = marketDataService.quoteStream.listen(
       (quotes) {
         for (final quote in quotes) {
           _latestQuotes[quote.symbol] = quote;
-          print('[PO-4 CONTROLLER] \${quote.symbol} \${quote.price}');
+          print('[PO-4 CONTROLLER] ${quote.symbol} ${quote.price}');
         }
 
         if (!_quoteController.isClosed) {
@@ -99,7 +114,9 @@ class ScannerController {
 
         // STAGE 53 — resolve matured 60-second predictions against
         // the first real incoming market quote at or after expiration.
-        _resolveExpiredPredictions();
+        if (_dukeHistoryReady) {
+          _resolveExpiredPredictions();
+        }
 
         final updatedSignals = scannerEngine.analyze(quotes);
 
@@ -107,34 +124,59 @@ class ScannerController {
           final dukeResult = dukeBridge.analyzeSignal(signal);
           _latestDukeResults[signal.symbol] = dukeResult;
 
-          // STAGE 53 — freeze the Stage 51 formula at the same moment
-          // Duke creates a qualified learning record.
-          final signalRecord = dukeResult.signalRecord;
           final formulaSnapshot =
               scannerEngine.advancedFormulaFor(signal.symbol);
-
-          if (signalRecord != null && formulaSnapshot != null) {
-            formulaOutcomeTracker.track(
-              id: signalRecord.id,
-              symbol: signal.symbol,
-              liveDirection: _rawDirection(signal.direction),
-              liveConfidence: signal.confidence,
-              entryPrice: signalRecord.entryPrice,
-              stopLoss: signal.stopLoss,
-              setup: signal.setup,
-              openedAt: signalRecord.openedAt,
-              formula: formulaSnapshot,
-            );
-
-            unawaited(
-              formulaOutcomeHistoryStore.save(formulaOutcomeTracker),
-            );
-          }
-
           final finalSignal = _applyDukeDecision(
             signal,
             dukeResult,
           );
+
+          // FORMULA AUTHORITY LEDGER
+          // One official 60-second paper prediction per symbol.
+          // WAIT never opens a prediction.
+          if (_dukeHistoryReady &&
+              formulaSnapshot != null &&
+              finalSignal.direction != TradeDirection.wait) {
+            final alreadyOpen = dukeBridge.duke.signalMemory.records.any(
+              (record) => record.isOpen && record.symbol == finalSignal.symbol,
+            );
+
+            final liveQuote = _latestQuotes[finalSignal.symbol];
+
+            if (!alreadyOpen &&
+                liveQuote != null &&
+                liveQuote.price.isFinite &&
+                liveQuote.price > 0) {
+              final decision = _rawDirection(finalSignal.direction);
+
+              final signalRecord = dukeBridge.duke.signalMemory.recordSignal(
+                symbol: finalSignal.symbol,
+                decision: decision,
+                confidence: finalSignal.confidence,
+                entryPrice: liveQuote.price,
+              );
+
+              unawaited(
+                dukeSignalHistoryStore.save(dukeBridge.duke.signalMemory),
+              );
+
+              formulaOutcomeTracker.track(
+                id: signalRecord.id,
+                symbol: finalSignal.symbol,
+                liveDirection: decision,
+                liveConfidence: finalSignal.confidence,
+                entryPrice: signalRecord.entryPrice,
+                stopLoss: finalSignal.stopLoss,
+                setup: finalSignal.setup,
+                openedAt: signalRecord.openedAt,
+                formula: formulaSnapshot,
+              );
+
+              unawaited(
+                formulaOutcomeHistoryStore.save(formulaOutcomeTracker),
+              );
+            }
+          }
 
           _latestSignals[finalSignal.symbol] = finalSignal;
 
@@ -228,6 +270,10 @@ class ScannerController {
       if (closed == null) {
         continue;
       }
+
+      unawaited(
+        dukeSignalHistoryStore.save(dukeBridge.duke.signalMemory),
+      );
 
       if (pending != null) {
         final riskDistance = (pending.entryPrice - pending.stopLoss).abs();
