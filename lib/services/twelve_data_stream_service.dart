@@ -16,41 +16,138 @@ class TwelveDataStreamTick {
 }
 
 class TwelveDataStreamService {
+  static const String _bridgeUrl = 'wss://bridge.sciool.net/ws/po';
+
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
+  Timer? _reconnectTimer;
+  Timer? _watchdogTimer;
+
+  bool _disposed = false;
+  bool _manualDisconnect = false;
+  bool _connecting = false;
+
+  List<String> _symbols = const [];
+  DateTime? _lastTickAt;
+  int _reconnectAttempt = 0;
 
   final StreamController<TwelveDataStreamTick> _controller =
       StreamController<TwelveDataStreamTick>.broadcast();
 
+  final Map<String, DateTime> _lastAcceptedTick = {};
+
   Stream<TwelveDataStreamTick> get tickStream => _controller.stream;
 
   bool get isConnected => _channel != null;
+  DateTime? get lastTickAt => _lastTickAt;
 
   Future<void> connect(List<String> symbols) async {
-    await disconnect();
+    _symbols = List<String>.from(symbols);
 
-    if (symbols.isEmpty) return;
+    if (_symbols.isEmpty || _disposed) return;
 
-    final uri = Uri.parse(
-      'wss://bridge.sciol.net/ws/po',
-    );
+    _manualDisconnect = false;
+    _startWatchdog();
+    await _openSocket();
+  }
 
-    _channel = WebSocketChannel.connect(uri);
+  Future<void> _openSocket() async {
+    if (_disposed || _manualDisconnect || _connecting || _symbols.isEmpty) {
+      return;
+    }
 
-    await _channel!.ready;
+    _connecting = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
 
-    _subscription = _channel!.stream.listen(
-      _handleMessage,
-      onError: (_) {
-        _channel = null;
-      },
-      onDone: () {
-        _channel = null;
-      },
+    try {
+      await _subscription?.cancel();
+      _subscription = null;
+
+      await _channel?.sink.close();
+      _channel = null;
+
+      final channel = WebSocketChannel.connect(
+        Uri.parse(_bridgeUrl),
+      );
+
+      _channel = channel;
+
+      await channel.ready;
+
+      if (_disposed || _manualDisconnect) {
+        await channel.sink.close();
+        if (identical(_channel, channel)) {
+          _channel = null;
+        }
+        return;
+      }
+
+      _reconnectAttempt = 0;
+      _lastTickAt = DateTime.now();
+
+      _subscription = channel.stream.listen(
+        _handleMessage,
+        onError: (_) {
+          if (identical(_channel, channel)) {
+            _channel = null;
+          }
+          _scheduleReconnect();
+        },
+        onDone: () {
+          if (identical(_channel, channel)) {
+            _channel = null;
+          }
+          _scheduleReconnect();
+        },
+        cancelOnError: false,
+      );
+    } catch (_) {
+      _channel = null;
+      _scheduleReconnect();
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  void _scheduleReconnect() {
+    if (_disposed || _manualDisconnect || _symbols.isEmpty) return;
+    if (_reconnectTimer?.isActive ?? false) return;
+
+    _reconnectAttempt++;
+
+    final seconds = _reconnectAttempt <= 1
+        ? 1
+        : _reconnectAttempt == 2
+            ? 2
+            : _reconnectAttempt == 3
+                ? 3
+                : 5;
+
+    _reconnectTimer = Timer(
+      Duration(seconds: seconds),
+      () => unawaited(_openSocket()),
     );
   }
 
-  final Map<String, DateTime> _lastAcceptedTick = {};
+  void _startWatchdog() {
+    _watchdogTimer ??= Timer.periodic(
+      const Duration(seconds: 2),
+      (_) {
+        if (_disposed || _manualDisconnect || _symbols.isEmpty) {
+          return;
+        }
+
+        final last = _lastTickAt;
+        final stale = last == null ||
+            DateTime.now().difference(last) > const Duration(seconds: 5);
+
+        if (_channel == null || stale) {
+          unawaited(_openSocket());
+        }
+      },
+    );
+  }
 
   void _handleMessage(dynamic message) {
     try {
@@ -64,8 +161,8 @@ class TwelveDataStreamService {
         RegExp(r'_otc$', caseSensitive: false),
         '_OTC',
       );
-      final rawPrice = data['price'];
 
+      final rawPrice = data['price'];
       final price = rawPrice is num
           ? rawPrice.toDouble()
           : double.tryParse(rawPrice?.toString() ?? '');
@@ -76,9 +173,7 @@ class TwelveDataStreamService {
 
       final timestampRaw = data['timestamp'];
 
-      // Accept only genuine market ticks with numeric source timestamps.
-      // Forecast/signal packets can contain arrays such as [[3, 4]];
-      // those must never become the scanner current price.
+      // Ignore signal/forecast snapshots whose timestamp is not numeric.
       if (timestampRaw is! num) return;
 
       final sourceTimestamp = DateTime.fromMillisecondsSinceEpoch(
@@ -88,11 +183,10 @@ class TwelveDataStreamService {
       final now = DateTime.now();
       final age = now.difference(sourceTimestamp);
 
-      // Pocket Option market timestamps may carry server clock skew.
-      // For future-skewed live packets, preserve the price and use the
-      // local arrival time. Still reject genuinely stale past packets.
       late final DateTime timestamp;
 
+      // Pocket Option can report a future-skewed server timestamp.
+      // Keep the genuine tick but timestamp it at local arrival time.
       if (age < const Duration(seconds: -2)) {
         timestamp = now;
       } else if (age > const Duration(seconds: 3)) {
@@ -103,7 +197,9 @@ class TwelveDataStreamService {
 
       final previous = _lastAcceptedTick[symbol];
       if (previous != null && timestamp.isBefore(previous)) return;
+
       _lastAcceptedTick[symbol] = timestamp;
+      _lastTickAt = now;
 
       if (!_controller.isClosed) {
         _controller.add(
@@ -118,14 +214,25 @@ class TwelveDataStreamService {
   }
 
   Future<void> disconnect() async {
+    _manualDisconnect = true;
+
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+
     await _subscription?.cancel();
     _subscription = null;
 
     await _channel?.sink.close();
     _channel = null;
+
+    _lastTickAt = null;
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await disconnect();
     await _controller.close();
   }
