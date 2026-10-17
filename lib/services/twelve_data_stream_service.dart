@@ -32,7 +32,7 @@ class TwelveDataStreamService {
     if (symbols.isEmpty) return;
 
     final uri = Uri.parse(
-      'wss://bridge.sciool.net/ws/po',
+      'wss://bridge.sciol.net/ws/po',
     );
 
     _channel = WebSocketChannel.connect(uri);
@@ -76,19 +76,29 @@ class TwelveDataStreamService {
 
       final timestampRaw = data['timestamp'];
 
-      DateTime timestamp = DateTime.now();
+      // Accept only genuine market ticks with numeric source timestamps.
+      // Forecast/signal packets can contain arrays such as [[3, 4]];
+      // those must never become the scanner current price.
+      if (timestampRaw is! num) return;
 
-      if (timestampRaw is num) {
-        timestamp = DateTime.fromMillisecondsSinceEpoch(
-          (timestampRaw.toDouble() * 1000).round(),
-        );
-      }
+      final sourceTimestamp = DateTime.fromMillisecondsSinceEpoch(
+        (timestampRaw.toDouble() * 1000).round(),
+      );
 
       final now = DateTime.now();
-      final age = now.difference(timestamp);
-      if (age > const Duration(seconds: 3) ||
-          age < const Duration(seconds: -2)) {
+      final age = now.difference(sourceTimestamp);
+
+      // Pocket Option market timestamps may carry server clock skew.
+      // For future-skewed live packets, preserve the price and use the
+      // local arrival time. Still reject genuinely stale past packets.
+      late final DateTime timestamp;
+
+      if (age < const Duration(seconds: -2)) {
+        timestamp = now;
+      } else if (age > const Duration(seconds: 3)) {
         return;
+      } else {
+        timestamp = sourceTimestamp;
       }
 
       final previous = _lastAcceptedTick[symbol];
