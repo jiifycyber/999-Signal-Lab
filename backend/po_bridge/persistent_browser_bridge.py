@@ -1,3 +1,4 @@
+from science_raw_archive import archive_frame
 import asyncio
 import base64
 import json
@@ -5,8 +6,12 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Optional
+from science_tick_store import science_tick_store
+from science_regime_engine import analyze_regime_24h
+from science_feature_engine import analyze as analyze_science_features
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 
 
@@ -27,6 +32,14 @@ PO_URL = "https://m.pocketoption.com/en/login/"
 
 app = FastAPI(
     title="999 Signal Intelligent Pro - Pocket Option Browser Bridge"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:9199", "http://127.0.0.1:9199", "https://ic391-defense-command.tail49e2f2.ts.net:9201"],
+    allow_credentials=True,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
@@ -66,32 +79,22 @@ state = State()
 def normalize_symbol(value: Any) -> Optional[str]:
     if value is None:
         return None
-
     raw = str(value).upper().strip()
-
-    # Detect OTC BEFORE cleaning the symbol.
-    is_otc = "OTC" in raw
-
-    cleaned = raw
-    cleaned = cleaned.replace("/", "")
-    cleaned = cleaned.replace("-", "")
-    cleaned = cleaned.replace(" ", "")
-    cleaned = cleaned.replace("_OTC", "")
-    cleaned = cleaned.replace("OTC_", "")
-    cleaned = cleaned.replace("OTC", "")
-
-    match = re.search(r"([A-Z]{6})", cleaned)
-
-    if not match:
+    if not raw:
         return None
-
-    symbol = match.group(1)
-
-    if is_otc:
-        symbol = f"{symbol}_OTC"
-
-    return symbol
-
+    otc = raw.endswith(chr(95) + chr(79) + chr(84) + chr(67))
+    if otc:
+        raw = raw[:-4]
+    raw = raw.replace(chr(47), chr(0)).replace(chr(45), chr(0)).replace(chr(32), chr(0))
+    if chr(0) in raw:
+        return None
+    if not re.fullmatch(r'[#]?[A-Z0-9_]{3,32}', raw):
+        return None
+    if not any(ch.isalpha() for ch in raw):
+        return None
+    if raw.startswith(chr(35)):
+        raw = raw[1:]
+    return raw + (chr(95) + chr(79) + chr(84) + chr(67) if otc else str())
 
 def as_price(value: Any) -> Optional[float]:
     if isinstance(value, bool):
@@ -314,6 +317,17 @@ async def emit_price(
     )
 
     state.latest_prices[symbol] = price
+
+    # Synchronize the observed market catalog with the browser recovery watcher.
+    if state.page is not None and not state.page.is_closed():
+        catalog = sorted(state.latest_prices.keys())
+        if len(catalog) != getattr(state, "last_subscription_catalog_size", -1):
+            state.last_subscription_catalog_size = len(catalog)
+            wire_assets = [x[:-4] + "_otc" if x.endswith("_OTC") else x for x in catalog]
+            try:
+                await state.page.evaluate("assets => {window.__signalLabSubscriptionCatalog = assets;}", wire_assets)
+            except Exception:
+                pass
     state.prices_seen += 1
     state.last_price_time = now
 
@@ -322,6 +336,19 @@ async def emit_price(
     )
 
     state.symbol_last_seen[symbol] = now
+
+    science_stored = science_tick_store.record(symbol, price, timestamp)
+    if science_stored:
+        print(
+            "SCIENCE TICK STORED:",
+            symbol,
+            price,
+            "24h=",
+            science_tick_store.count_24h(symbol),
+            "total=",
+            science_tick_store.total_count(),
+            flush=True,
+        )
 
     # Build M1 OHLC from the exact same accepted Pocket Option tick.
     update_m1_candle(
@@ -473,6 +500,7 @@ def json_candidates(text: str):
 
 
 async def process_frame(frame: Any, ws_url: str):
+    archive_frame(frame, ws_url)
     state.frames_seen += 1
     state.last_frame_time = time.time()
 
@@ -577,9 +605,31 @@ async def attach_page(page):
             received,
         )
 
+        def sent(frame):
+            try:
+                raw = frame.decode("utf-8", errors="ignore") if isinstance(frame, bytes) else str(frame)
+                event = raw.split("[", 1)[1].split(",", 1)[0].strip().strip(chr(34)) if "[" in raw else "protocol"
+                if event.lower() not in ("auth", "authorization", "login"):
+                    print("PO OUTGOING EVENT:", event[:80], "BYTES:", len(raw), flush=True)
+                    if event in ("subfor", "changeSymbol"):
+                        print("PO MARKET SUBSCRIPTION SERVER:", ws.url.split("/")[2].split("?")[0], "PAYLOAD:", raw[:500], flush=True)
+            except Exception:
+                pass
+
+        ws.on("framesent", sent)
+
+
+
+    await page.evaluate('() => {if(window.__signalLabAutoSubscribe)return;window.__signalLabAutoSubscribe=true;let previous=null;let subscribed=new Set();window.setInterval(()=>{const sockets=window.__signalLabMarketSockets||[];const socket=sockets.find(x=>x.readyState===1&&new URL(x.url).hostname.endsWith(".po.market"));if(!socket)return;if(socket!==previous){previous=socket;subscribed=new Set();}const prices=window.__signalLabSubscriptionCatalog||[];let sent=0;for(const asset of prices){if(sent>=10)break;if(subscribed.has(asset))continue;try{socket.send("42"+JSON.stringify(["subfor",asset]));subscribed.add(asset);sent++;}catch(e){break;}}},1000);}')
+
     page.on(
         "websocket",
         page_websocket,
+    )
+
+    page.on(
+        "framenavigated",
+        lambda frame: print("PO NAVIGATED:", frame.url, flush=True),
     )
 
 
@@ -605,6 +655,8 @@ async def start_browser():
         )
     )
 
+    await state.context.add_init_script(script='(function(){if(window.__signalLabSocketHookInstalled)return;window.__signalLabSocketHookInstalled=true;const NativeWebSocket=window.WebSocket;window.__signalLabMarketSocket=null;window.__signalLabMarketSockets=[];window.WebSocket=new Proxy(NativeWebSocket,{construct(target,args,newTarget){const socket=Reflect.construct(target,args,newTarget);const url=String(args[0]||String());if(url.includes(String.fromCharCode(46,112,111,46,109,97,114,107,101,116,47,115,111,99,107,101,116,46,105,111,47))){window.__signalLabMarketSocket=socket;window.__signalLabMarketSockets.push(socket);}return socket;}});})();')
+
     pages = state.context.pages
 
     if pages:
@@ -627,6 +679,8 @@ async def start_browser():
         wait_until="domcontentloaded",
         timeout=60000,
     )
+
+    print("PO FINAL URL:", page.url, flush=True)
 
     print()
     print("POCKET OPTION BROWSER READY")
@@ -658,6 +712,67 @@ async def root():
         ),
     }
 
+
+@app.post('/science/subscribe-market')
+async def science_subscribe_market(request: Request):
+    if request.client is None or request.client.host not in ('127.0.0.1', '::1'):
+        return dict(sent=False, reason='localhost_only')
+    payload = await request.json()
+    assets = payload.get('assets', [])
+    if not isinstance(assets, list) or not 1 <= len(assets) <= 10:
+        return dict(sent=False, reason='batch_size_must_be_1_to_10')
+    if any(not isinstance(a, str) or not normalize_symbol(a) for a in assets):
+        return dict(sent=False, reason='invalid_asset')
+    page = state.page
+    if page is None or page.is_closed():
+        return dict(sent=False, reason='browser_unavailable')
+    script = '(assets) => {const sockets=window.__signalLabMarketSockets||[];const s=sockets.find(x=>x.readyState===1 && new URL(x.url).hostname.endsWith(".po.market"));if(!s)return {sent:false,reason:"no_open_market_socket"};for(const a of assets){s.send("42"+JSON.stringify(["subfor",a]));}return {sent:true,server:new URL(s.url).hostname,assets:assets};}'
+    return await page.evaluate(script, assets)
+
+@app.post("/science/test-audcad-subscription")
+async def science_test_audcad_subscription(request: Request):
+    if request.client is None or request.client.host not in ('127.0.0.1', '::1'):
+        return dict(sent=False, reason='localhost_only')
+    if request.query_params.get('confirm') != 'AUDCAD':
+        return dict(sent=False, reason='confirmation_required')
+    page = state.page
+    if page is None or page.is_closed():
+        return dict(sent=False, reason='browser_unavailable')
+    return await page.evaluate('() => {const sockets=window.__signalLabMarketSockets||[];const s=sockets.find(x=>x.readyState===1 && new URL(x.url).hostname.endsWith(".po.market"));if(!s)return {sent:false,reason:"no_open_socket"};s.send("42[\\"subfor\\",\\"AUDCAD_otc\\"]");return {sent:true,server:new URL(s.url).hostname,asset:"AUDCAD_otc"};}')
+
+@app.get("/science/recovery-status")
+async def science_recovery_status(request: Request):
+    if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
+        return {"ready": False, "reason": "localhost_only"}
+    page = state.page
+    if page is None or page.is_closed():
+        return {"ready": False, "reason": "browser_unavailable"}
+    try:
+        return await page.evaluate("() => ({ready:true,watcher:Boolean(window.__signalLabAutoSubscribe),catalog_size:(window.__signalLabSubscriptionCatalog||[]).length,open_sockets:(window.__signalLabMarketSockets||[]).filter(s=>s.readyState===1).length})")
+    except Exception as exc:
+        return {"ready": False, "error_type": type(exc).__name__}
+
+@app.get("/science/market-sockets")
+async def science_market_sockets():
+    page = state.page
+    if page is None or page.is_closed():
+        return dict(ready=False, sockets=[])
+    try:
+        sockets = await page.evaluate('() => (window.__signalLabMarketSockets || []).map(s => ({server: new URL(s.url).hostname, state: s.readyState, open: s.readyState === 1}))')
+        return dict(ready=True, sockets=sockets)
+    except Exception as exc:
+        return dict(ready=False, error_type=type(exc).__name__)
+
+@app.get("/science/socket-capabilities")
+async def science_socket_capabilities():
+    page = state.page
+    if page is None or page.is_closed():
+        return {"ready": False}
+    try:
+        result = await page.evaluate("() => ({socket_io: typeof window.io === \"function\", socket_global: typeof window.socket !== \"undefined\", socket_emit: Boolean(window.socket && typeof window.socket.emit === \"function\")})")
+        return {"ready": True, "capabilities": result}
+    except Exception as exc:
+        return {"ready": False, "error_type": type(exc).__name__}
 
 @app.get("/health")
 async def health():
@@ -931,6 +1046,85 @@ async def pocket_option_websocket(
             flush=True,
         )
 
+
+
+# ------------------------------------------------------------
+# 999 SIGNAL LAB SCIENCE VAULT API
+# ------------------------------------------------------------
+
+def science_tick_row(row):
+    if row is None:
+        return None
+    return {
+        "symbol": row[0],
+        "price": row[1],
+        "source_timestamp": row[2],
+        "received_timestamp": row[3],
+        "is_otc": bool(row[4]),
+        "source": row[5],
+    }
+
+
+@app.get("/science/current/{symbol}")
+async def science_current(symbol: str):
+    normalized = normalize_symbol(symbol)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+
+    row = science_tick_store.latest(normalized)
+    return {
+        "source": "999_signal_lab_science_vault",
+        "symbol": normalized,
+        "tick": science_tick_row(row),
+    }
+
+
+@app.get("/science/history/{symbol}")
+async def science_history(symbol: str, limit: int = 5000):
+    normalized = normalize_symbol(symbol)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+
+    rows = science_tick_store.history_24h(normalized, limit=limit)
+    return {
+        "source": "999_signal_lab_science_vault",
+        "symbol": normalized,
+        "window_hours": 24,
+        "count": len(rows),
+        "ticks": [science_tick_row(row) for row in rows],
+    }
+
+
+
+@app.get("/science/features/{symbol}")
+async def science_features(symbol: str):
+    normalized = normalize_symbol(symbol)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+    return analyze_science_features(normalized)
+
+@app.get("/science/regime/{symbol}")
+async def science_regime(symbol: str):
+    normalized = normalize_symbol(symbol)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+    return analyze_regime_24h(normalized)
+
+
+@app.get("/science/stats")
+async def science_stats():
+    counts = science_tick_store.symbol_counts_24h()
+    return {
+        "source": "999_signal_lab_science_vault",
+        "window_hours": 24,
+        "active_24h_total": science_tick_store.count_24h(),
+        "archive_total": science_tick_store.archive_count(),
+        "all_time_total": science_tick_store.total_count(),
+        "symbols": [
+            {"symbol": symbol, "ticks_24h": count}
+            for symbol, count in counts
+        ],
+    }
 
 if __name__ == "__main__":
     import uvicorn

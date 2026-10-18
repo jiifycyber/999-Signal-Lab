@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../models/forex_quote.dart';
+import '../science/science_tick_vault.dart';
 import '../models/scan_signal.dart';
 import '../ai/agent_duke_scanner_bridge.dart';
 import '../ai/agent_duke_master_engine.dart';
@@ -69,6 +70,8 @@ class ScannerController {
     return 'ACTIVE';
   }
 
+  final ScienceTickVault scienceTickVault = ScienceTickVault();
+
   final Map<String, ForexQuote> _latestQuotes = {};
   final Map<String, ScanSignal> _latestSignals = {};
   final Map<String, DukeMasterResult> _latestDukeResults = {};
@@ -108,6 +111,9 @@ class ScannerController {
       (quotes) {
         for (final quote in quotes) {
           _latestQuotes[quote.symbol] = quote;
+          scienceTickVault.ingest(quote);
+          print(
+              '[SCIENCE-VAULT] ${quote.symbol} ticks24h=${scienceTickVault.tickCountFor(quote.symbol)} total=${scienceTickVault.totalTickCount}');
           print('[PO-4 CONTROLLER] ${quote.symbol} ${quote.price}');
         }
 

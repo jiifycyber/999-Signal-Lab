@@ -1,0 +1,916 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../models/forex_quote.dart';
+import '../models/scan_signal.dart';
+import '../services/scanner_controller.dart';
+
+class SignalLabDashboard extends StatefulWidget {
+  const SignalLabDashboard({super.key});
+
+  @override
+  State<SignalLabDashboard> createState() => _SignalLabDashboardState();
+}
+
+class _SignalLabDashboardState extends State<SignalLabDashboard> {
+  static const _bg = Color(0xFF03111F);
+  static const _panel = Color(0xFF071C2E);
+  static const _panel2 = Color(0xFF09273B);
+  static const _cyan = Color(0xFF13D9FF);
+  static const _green = Color(0xFF20F7A5);
+  static const _gold = Color(0xFFFFD85A);
+  static const _magenta = Color(0xFFE448FF);
+  static const _red = Color(0xFFFF4F79);
+
+  late final ScannerController _controller;
+  StreamSubscription<List<ForexQuote>>? _quotesSub;
+  StreamSubscription<List<ScanSignal>>? _signalsSub;
+
+  final Map<String, double> _prices = {};
+  final Map<String, List<double>> _history = {};
+  final Map<String, ScanSignal> _signals = {};
+
+  String? _selectedSymbol;
+  int _liveTicks = 0;
+  bool _connected = false;
+  int _navIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ScannerController();
+
+    _quotesSub = _controller.quoteStream.listen((quotes) {
+      if (!mounted) return;
+      setState(() {
+        _connected = true;
+        for (final quote in quotes) {
+          _prices[quote.symbol] = quote.price;
+          final series = _history.putIfAbsent(quote.symbol, () => <double>[]);
+          series.add(quote.price);
+          if (series.length > 180) {
+            series.removeRange(0, series.length - 180);
+          }
+          _liveTicks++;
+          _selectedSymbol ??= quote.symbol;
+        }
+      });
+    });
+
+    _signalsSub = _controller.signalStream.listen((signals) {
+      if (!mounted) return;
+      setState(() {
+        for (final signal in signals) {
+          _signals[signal.symbol] = signal;
+        }
+      });
+    });
+
+    _controller.setLiveMode();
+    _controller.start();
+  }
+
+  @override
+  void dispose() {
+    _quotesSub?.cancel();
+    _signalsSub?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  List<String> get _symbols {
+    final rows = _prices.keys.toList()..sort();
+    return rows;
+  }
+
+  String get _symbol {
+    final selected = _selectedSymbol;
+    if (selected != null && _prices.containsKey(selected)) return selected;
+    return _symbols.isNotEmpty ? _symbols.first : 'WAITING_FOR_MARKET';
+  }
+
+  double? get _price => _prices[_symbol];
+  ScanSignal? get _signal => _signals[_symbol];
+
+  @override
+  Widget build(BuildContext context) {
+    final symbol = _symbol;
+    final signal = _signal;
+    final price = _price;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _header(),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () async => setState(() {}),
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 18),
+                  children: [
+                    _tabs(),
+                    const SizedBox(height: 10),
+                    _metricStrip(),
+                    const SizedBox(height: 10),
+                    _marketCard(symbol, price, signal),
+                    const SizedBox(height: 10),
+                    _predictionRow(signal),
+                    const SizedBox(height: 10),
+                    _scienceMetrics(symbol, signal),
+                    const SizedBox(height: 10),
+                    _researchRow(symbol),
+                    const SizedBox(height: 10),
+                    _topPairs(),
+                  ],
+                ),
+              ),
+            ),
+            _bottomNav(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: _box(cyan: true),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: _cyan, width: 2),
+              boxShadow: const [
+                BoxShadow(color: Color(0x5513D9FF), blurRadius: 12)
+              ],
+            ),
+            child: const Text('9',
+                style: TextStyle(
+                    color: _cyan, fontSize: 24, fontWeight: FontWeight.w900)),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                          text: '999 SIGNAL ',
+                          style: TextStyle(color: Colors.white)),
+                      TextSpan(text: 'LAB', style: TextStyle(color: _cyan)),
+                    ],
+                  ),
+                  style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2),
+                ),
+                SizedBox(height: 2),
+                Text('MARKET SCIENCE + DATA RESEARCH',
+                    style: TextStyle(
+                        color: _cyan, fontSize: 10, letterSpacing: 1.4)),
+              ],
+            ),
+          ),
+          _statusPill(_connected ? 'LAB ONLINE' : 'CONNECTING',
+              _connected ? _green : _gold),
+        ],
+      ),
+    );
+  }
+
+  Widget _tabs() {
+    const labels = [
+      'DASHBOARD',
+      'PAIR RESEARCH',
+      'MARKET ANALYSIS',
+      'HISTORICAL',
+      'EXPERIMENTS',
+      'DATA VAULT'
+    ];
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: labels.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 7),
+        itemBuilder: (_, i) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: i == 0 ? const Color(0x2613D9FF) : _panel,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: i == 0 ? _cyan : const Color(0xFF17435E)),
+          ),
+          child: Text(labels[i],
+              style: TextStyle(
+                  color: i == 0 ? _cyan : const Color(0xFF9AB1C5),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800)),
+        ),
+      ),
+    );
+  }
+
+  Widget _metricStrip() {
+    return Row(
+      children: [
+        Expanded(
+            child:
+                _metric('LIVE TICKS', '$_liveTicks', Icons.graphic_eq, _cyan)),
+        const SizedBox(width: 7),
+        Expanded(
+            child: _metric(
+                'SESSION VAULT',
+                '${_controller.scienceTickVault.totalTickCount}',
+                Icons.storage,
+                _cyan)),
+        const SizedBox(width: 7),
+        Expanded(
+            child: _metric('PAIR ANALYSIS', '${_prices.length}',
+                Icons.hub_outlined, _cyan)),
+        const SizedBox(width: 7),
+        Expanded(
+            child: _metric(
+                'SCIENCE', 'BUILDING', Icons.science_outlined, _magenta)),
+      ],
+    );
+  }
+
+  Widget _metric(String title, String value, IconData icon, Color color) {
+    return Container(
+      height: 82,
+      padding: const EdgeInsets.all(10),
+      decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 6),
+            Expanded(
+                child: Text(title,
+                    style: const TextStyle(
+                        color: Color(0xFFA7BED1),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800)))
+          ]),
+          const Spacer(),
+          FittedBox(
+              child: Text(value,
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900))),
+        ],
+      ),
+    );
+  }
+
+  Widget _marketCard(String symbol, double? price, ScanSignal? signal) {
+    final series = _history[symbol] ?? const <double>[];
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: _box(cyan: true),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.star, color: _gold),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _prices.containsKey(symbol) ? symbol : null,
+                    isExpanded: true,
+                    dropdownColor: _panel2,
+                    hint: const Text('Waiting for Pocket Option...',
+                        style: TextStyle(color: Colors.white70)),
+                    items: _symbols
+                        .map((s) => DropdownMenuItem(
+                            value: s,
+                            child: Text(s,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800))))
+                        .toList(),
+                    onChanged: (value) =>
+                        setState(() => _selectedSymbol = value),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                      price == null
+                          ? '--'
+                          : price.toStringAsFixed(_priceDigits(price)),
+                      style: const TextStyle(
+                          color: Color(0xFF79FFF0),
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900)),
+                  Row(children: [
+                    const Icon(Icons.circle, color: _green, size: 8),
+                    const SizedBox(width: 5),
+                    Text(_connected ? 'LIVE' : 'OFFLINE',
+                        style: const TextStyle(
+                            color: _green,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold))
+                  ]),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: ['M1', 'M5', 'M15', 'H1', 'H4']
+                .map((t) => Container(
+                      margin: const EdgeInsets.only(right: 7),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 13, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: t == 'M1'
+                            ? const Color(0x2413D9FF)
+                            : const Color(0x10000000),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: t == 'M1' ? _cyan : const Color(0xFF173D57)),
+                      ),
+                      child: Text(t,
+                          style: TextStyle(
+                              color:
+                                  t == 'M1' ? _cyan : const Color(0xFF91A8BA),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold)),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 190,
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    decoration: BoxDecoration(
+                        color: const Color(0x33000000),
+                        borderRadius: BorderRadius.circular(10)),
+                    child: CustomPaint(painter: _LabChartPainter(series)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                        color: const Color(0x44000000),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF184A64))),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('LIVE REGIME',
+                            style: TextStyle(
+                                color: _cyan,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 12),
+                        _regimeLine(
+                            'TREND', signal?.trend ?? 'COLLECTING', _green),
+                        _regimeLine(
+                            'REGIME', signal?.regime ?? 'RESEARCH', _magenta),
+                        _regimeLine(
+                            'VOLATILITY',
+                            signal == null
+                                ? '--'
+                                : signal.volatilityScore.toStringAsFixed(1),
+                            _gold),
+                        _regimeLine(
+                            'STRUCTURE',
+                            signal == null
+                                ? '--'
+                                : signal.structureScore.toStringAsFixed(1),
+                            _cyan),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _predictionRow(ScanSignal? signal) {
+    return Row(
+      children: [
+        Expanded(
+            child: _predictionCard(
+          title: 'LIVE PREDICTION',
+          subtitle: 'REAL-TIME SCANNER MODEL',
+          direction: signal?.directionText ?? 'WAIT',
+          confidence: signal?.confidence,
+          color: _green,
+          icon: Icons.trending_up,
+        )),
+        const SizedBox(width: 9),
+        Expanded(
+            child: _predictionCard(
+          title: 'SCIENCE PREDICTION',
+          subtitle: 'HISTORICAL + STATISTICAL MODEL',
+          direction: 'BUILDING',
+          confidence: null,
+          color: _gold,
+          icon: Icons.psychology_alt_outlined,
+        )),
+      ],
+    );
+  }
+
+  Widget _predictionCard({
+    required String title,
+    required String subtitle,
+    required String direction,
+    required double? confidence,
+    required Color color,
+    required IconData icon,
+  }) {
+    return Container(
+      height: 154,
+      padding: const EdgeInsets.all(12),
+      decoration: _box(accent: color),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900)),
+                  Text(subtitle,
+                      style: TextStyle(
+                          color: color,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700))
+                ]))
+          ]),
+          const Spacer(),
+          Row(
+            children: [
+              Expanded(
+                  child: Text(direction,
+                      style: TextStyle(
+                          color: color,
+                          fontSize: 25,
+                          fontWeight: FontWeight.w900))),
+              if (confidence != null)
+                Text('${_pct(confidence)}%',
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 7),
+          LinearProgressIndicator(
+              value: confidence == null ? 0.12 : _confidence01(confidence),
+              minHeight: 6,
+              backgroundColor: const Color(0xFF12293B),
+              color: color),
+          const SizedBox(height: 6),
+          Text(
+              confidence == null
+                  ? 'Collecting historical evidence'
+                  : 'Live scanner confidence',
+              style: const TextStyle(color: Color(0xFF8FA9BC), fontSize: 9)),
+        ],
+      ),
+    );
+  }
+
+  Widget _scienceMetrics(String symbol, ScanSignal? signal) {
+    final series = _history[symbol] ?? const <double>[];
+    final momentum = _simpleMomentum(series);
+    final velocity = _simpleVelocity(series);
+    final volatility = _simpleVolatility(series);
+    final reversal = _reversalProxy(series);
+
+    return Row(
+      children: [
+        Expanded(child: _smallMetric('MOMENTUM', momentum, _green)),
+        const SizedBox(width: 7),
+        Expanded(child: _smallMetric('VELOCITY', velocity, _cyan)),
+        const SizedBox(width: 7),
+        Expanded(child: _smallMetric('VOLATILITY', volatility, _red)),
+        const SizedBox(width: 7),
+        Expanded(child: _smallMetric('REVERSAL', reversal, _magenta)),
+      ],
+    );
+  }
+
+  Widget _smallMetric(String title, double value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  color: Color(0xFFA5BCD0),
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(value.toStringAsFixed(2),
+              style: TextStyle(
+                  color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 5),
+          LinearProgressIndicator(
+              value: (value.abs() / 2).clamp(0.0, 1.0),
+              minHeight: 4,
+              color: color,
+              backgroundColor: const Color(0xFF10283A)),
+        ],
+      ),
+    );
+  }
+
+  Widget _researchRow(String symbol) {
+    final count = _controller.scienceTickVault.tickCountFor(symbol);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Container(
+            height: 150,
+            padding: const EdgeInsets.all(12),
+            decoration: _box(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('TICK FLOW — LIVE SESSION',
+                    style: TextStyle(
+                        color: _cyan,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
+                const Spacer(),
+                Text('$count',
+                    style: const TextStyle(
+                        color: _green,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w900)),
+                const Text('accepted ticks for selected pair',
+                    style: TextStyle(color: Color(0xFF8CA7BA), fontSize: 10)),
+                const Spacer(),
+                LinearProgressIndicator(
+                    value: (count / 1000).clamp(0.0, 1.0),
+                    minHeight: 7,
+                    color: _green,
+                    backgroundColor: const Color(0xFF102A3C)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Container(
+            height: 150,
+            padding: const EdgeInsets.all(12),
+            decoration: _box(accent: _gold),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('HISTORICAL SIMILARITY',
+                    style: TextStyle(
+                        color: _gold,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
+                Spacer(),
+                Center(
+                    child: Text('BUILDING',
+                        style: TextStyle(
+                            color: _gold,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900))),
+                Spacer(),
+                Text(
+                    'Fingerprint ledger + 60s outcomes are the next science layer.',
+                    style: TextStyle(color: Color(0xFFB6A96E), fontSize: 10)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _topPairs() {
+    final ranked = _signals.values.toList()
+      ..sort((a, b) => b.confidence.compareTo(a.confidence));
+    final rows = ranked.take(5).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: _box(cyan: true),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.leaderboard_outlined, color: _cyan),
+              SizedBox(width: 8),
+              Text('TOP PAIRS — LIVE RESEARCH RANKING',
+                  style: TextStyle(
+                      color: _cyan, fontSize: 12, fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (rows.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                  child: Text('Collecting live signal rankings...',
+                      style: TextStyle(color: Color(0xFF89A5B8)))),
+            )
+          else
+            ...rows.asMap().entries.map((entry) {
+              final i = entry.key;
+              final signal = entry.value;
+              return Container(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                decoration: const BoxDecoration(
+                    border:
+                        Border(bottom: BorderSide(color: Color(0x2213D9FF)))),
+                child: Row(
+                  children: [
+                    SizedBox(
+                        width: 24,
+                        child: Text('${i + 1}',
+                            style: const TextStyle(
+                                color: _gold, fontWeight: FontWeight.w900))),
+                    Expanded(
+                        flex: 3,
+                        child: Text(signal.symbol,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800))),
+                    Expanded(
+                        flex: 2,
+                        child: Text(signal.directionText,
+                            style: TextStyle(
+                                color: _directionColor(signal.direction),
+                                fontWeight: FontWeight.w900))),
+                    Expanded(
+                        flex: 2,
+                        child: Text('${_pct(signal.confidence)}%',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                color: _cyan, fontWeight: FontWeight.w800))),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomNav() {
+    const items = [
+      (Icons.home_outlined, 'Lab Home'),
+      (Icons.bar_chart, 'Live Market'),
+      (Icons.search, 'Pair Research'),
+      (Icons.psychology_alt_outlined, 'Science'),
+      (Icons.storage_outlined, 'Data Vault'),
+      (Icons.science_outlined, 'Experiments'),
+    ];
+
+    return Container(
+      height: 70,
+      decoration: const BoxDecoration(
+        color: Color(0xFF041725),
+        border: Border(top: BorderSide(color: Color(0xFF14506A))),
+      ),
+      child: Row(
+        children: List.generate(items.length, (i) {
+          final active = _navIndex == i;
+          return Expanded(
+            child: InkWell(
+              onTap: () => setState(() => _navIndex = i),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(items[i].$1,
+                      color: active
+                          ? (i == 3 ? _gold : _cyan)
+                          : const Color(0xFF7893A8),
+                      size: 22),
+                  const SizedBox(height: 4),
+                  Text(items[i].$2,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color:
+                              active ? Colors.white : const Color(0xFF7893A8),
+                          fontSize: 8,
+                          fontWeight:
+                              active ? FontWeight.w800 : FontWeight.w500)),
+                ],
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _regimeLine(String label, String value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 11),
+      child: Row(
+        children: [
+          Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          const SizedBox(width: 7),
+          Expanded(
+              child: Text(label,
+                  style:
+                      const TextStyle(color: Color(0xFF8BA6BA), fontSize: 9))),
+          Flexible(
+              child: Text(value.toUpperCase(),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: color, fontSize: 9, fontWeight: FontWeight.w900))),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusPill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color)),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontSize: 9, fontWeight: FontWeight.w900)),
+    );
+  }
+
+  BoxDecoration _box({bool cyan = false, Color? accent}) {
+    final edge = accent ?? (cyan ? _cyan : const Color(0xFF15506A));
+    return BoxDecoration(
+      color: _panel,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: edge.withValues(alpha: 0.85)),
+      boxShadow: [
+        BoxShadow(color: edge.withValues(alpha: 0.10), blurRadius: 10)
+      ],
+    );
+  }
+
+  int _priceDigits(double price) {
+    if (price >= 1000) return 2;
+    if (price >= 100) return 3;
+    if (price >= 1) return 5;
+    return 6;
+  }
+
+  int _pct(double value) {
+    final pct = value <= 1.0 ? value * 100 : value;
+    return pct.round().clamp(0, 100);
+  }
+
+  double _confidence01(double value) {
+    final normalized = value <= 1.0 ? value : value / 100.0;
+    return normalized.clamp(0.0, 1.0);
+  }
+
+  Color _directionColor(TradeDirection direction) {
+    switch (direction) {
+      case TradeDirection.buy:
+        return _green;
+      case TradeDirection.sell:
+        return _red;
+      case TradeDirection.wait:
+        return _gold;
+    }
+  }
+
+  double _simpleMomentum(List<double> series) {
+    if (series.length < 2) return 0;
+    final n = math.min(20, series.length - 1);
+    final base = series[series.length - 1 - n];
+    if (base == 0) return 0;
+    return ((series.last - base) / base) * 10000;
+  }
+
+  double _simpleVelocity(List<double> series) {
+    if (series.length < 3) return 0;
+    return _simpleMomentum(series) / math.min(20, series.length - 1);
+  }
+
+  double _simpleVolatility(List<double> series) {
+    if (series.length < 3) return 0;
+    final window = series.skip(math.max(0, series.length - 30)).toList();
+    var sum = 0.0;
+    for (var i = 1; i < window.length; i++) {
+      final p = window[i - 1];
+      if (p != 0) sum += ((window[i] - p) / p).abs() * 10000;
+    }
+    return sum / math.max(1, window.length - 1);
+  }
+
+  double _reversalProxy(List<double> series) {
+    if (series.length < 5) return 0;
+    final window = series.skip(math.max(0, series.length - 30)).toList();
+    final mean = window.reduce((a, b) => a + b) / window.length;
+    if (mean == 0) return 0;
+    return ((series.last - mean) / mean).abs() * 10000;
+  }
+}
+
+class _LabChartPainter extends CustomPainter {
+  const _LabChartPainter(this.values);
+
+  final List<double> values;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = const Color(0x2213D9FF)
+      ..strokeWidth = 1;
+
+    for (var i = 1; i < 5; i++) {
+      final y = size.height * i / 5;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    for (var i = 1; i < 6; i++) {
+      final x = size.width * i / 6;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+
+    if (values.length < 2) return;
+
+    final minV = values.reduce(math.min);
+    final maxV = values.reduce(math.max);
+    final range = math.max(maxV - minV, 1e-12);
+    final path = Path();
+
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final y =
+          size.height - ((values[i] - minV) / range) * (size.height - 18) - 9;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    final glow = Paint()
+      ..color = const Color(0x5513D9FF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6;
+    final line = Paint()
+      ..color = const Color(0xFF13D9FF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    canvas.drawPath(path, glow);
+    canvas.drawPath(path, line);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LabChartPainter oldDelegate) =>
+      oldDelegate.values != values;
+}

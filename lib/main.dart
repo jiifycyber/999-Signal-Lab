@@ -13,9 +13,11 @@ import 'services/market_data_service.dart';
 import 'ai/agent_duke_command_center.dart';
 import 'modules/specialized/module_router.dart';
 
-import 'dashboard/pro_live_dashboard.dart';
+import 'science/signal_lab_dashboard.dart';
 
 const bool kUseProLiveDashboard = true;
+const bool kLabDirectMarketMode =
+    bool.fromEnvironment('LAB_DIRECT_MARKET_MODE', defaultValue: false);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,20 +55,20 @@ class NexusApp extends StatelessWidget {
         );
       },
       debugShowCheckedModeBanner: false,
-      title: '999 Signal Intelligence 2.0',
+      title: '999 Signal Lab',
       theme: ThemeData.dark(),
-      home: StreamBuilder<AuthState>(
-        stream: Supabase.instance.client.auth.onAuthStateChange,
-        builder: (context, snapshot) {
-          final session = Supabase.instance.client.auth.currentSession;
-          if (session == null) {
-            return const LoginScreen();
-          }
-          return kUseProLiveDashboard
-              ? const ProLiveDashboard()
-              : const NexusDashboard();
-        },
-      ),
+      home: kLabDirectMarketMode
+          ? const SignalLabDashboard()
+          : StreamBuilder<AuthState>(
+              stream: Supabase.instance.client.auth.onAuthStateChange,
+              builder: (context, snapshot) {
+                final session = Supabase.instance.client.auth.currentSession;
+                if (session == null) {
+                  return const LoginScreen();
+                }
+                return const SignalLabDashboard();
+              },
+            ),
     );
   }
 }
